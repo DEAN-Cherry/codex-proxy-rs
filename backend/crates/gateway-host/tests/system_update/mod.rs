@@ -481,13 +481,170 @@ async fn update_checks_should_follow_stage_promotion_and_experimental_isolation(
 }
 
 #[tokio::test]
+async fn update_detail_should_keep_current_release_notes_without_allowing_reinstallation() {
+    for current in [
+        "3.12.1",
+        "3.12.1-alpha.1",
+        "3.12.1-beta.1",
+        "3.12.1-rc.1",
+        "3.12.1-exp.1",
+        "3.12.1+build.1",
+    ] {
+        let server = MockServer::start().await;
+        let fixture = Fixture::new();
+        let release_url = format!("https://github.com/owner/repository/releases/tag/v{current}");
+        Mock::given(method("GET"))
+            .and(path("/repos/owner/repository/releases"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+                {
+                    "tag_name": format!("v{current}"),
+                    "prerelease": !semver::Version::parse(current).expect("version").pre.is_empty(),
+                    "body": "## 当前版本\n\n- 修复更新状态",
+                    "html_url": release_url,
+                }
+            ])))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let mut config = fixture.config(&format!("{}/repos", server.uri()));
+        config.version = current.to_owned();
+        if current.contains("-exp.") {
+            config.build_type = "experimental".to_owned();
+        }
+        let service = ProcessSystemOperations::new(CancellationToken::new(), config);
+
+        let detail = service.update_detail(true).await.expect("current release");
+        assert_eq!(detail.latest_version, current);
+        assert!(!detail.has_update);
+        assert!(detail.update_supported);
+        assert_eq!(
+            detail.notes.as_deref(),
+            Some("## 当前版本\n\n- 修复更新状态")
+        );
+        assert_eq!(detail.release_url.as_deref(), Some(release_url.as_str()));
+        let cached = service.update_detail(false).await.expect("cached release");
+        assert!(cached.cached);
+        assert_eq!(cached.notes, detail.notes);
+        assert_eq!(cached.release_url, detail.release_url);
+        assert!(!service.version().await.expect("version").has_update);
+
+        let error = service
+            .perform_update(Some(current.to_owned()))
+            .await
+            .expect_err("current release must not be installed again");
+        assert_eq!(error.kind(), SystemOperationErrorKind::Conflict);
+        assert!(!fixture.state().exists());
+        assert_eq!(
+            fs::read(fixture.executable()).expect("binary"),
+            b"old-binary"
+        );
+    }
+}
+
+#[tokio::test]
+async fn update_detail_should_prefer_available_update_notes_over_current_release() {
+    for current_first in [true, false] {
+        let server = MockServer::start().await;
+        let fixture = Fixture::new();
+        let mut releases = vec![
+            serde_json::json!({
+                "tag_name": "v1.0.0", "prerelease": false, "body": "current notes"
+            }),
+            serde_json::json!({
+                "tag_name": "v1.9.9", "prerelease": false, "body": "update notes",
+                "html_url": "https://github.com/owner/repository/releases/tag/v1.9.9"
+            }),
+        ];
+        if !current_first {
+            releases.reverse();
+        }
+        Mock::given(method("GET"))
+            .and(path("/repos/owner/repository/releases"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(releases))
+            .mount(&server)
+            .await;
+
+        let detail = fixture
+            .service(&server)
+            .update_detail(true)
+            .await
+            .expect("detail");
+        assert!(detail.has_update);
+        assert_eq!(detail.latest_version, TARGET_VERSION);
+        assert_eq!(detail.notes.as_deref(), Some("update notes"));
+        assert_eq!(
+            detail.release_url.as_deref(),
+            Some("https://github.com/owner/repository/releases/tag/v1.9.9")
+        );
+    }
+}
+
+#[tokio::test]
+async fn update_detail_should_find_current_release_notes_across_pages() {
+    let server = MockServer::start().await;
+    let fixture = Fixture::new();
+    Mock::given(method("GET"))
+        .and(path("/repos/owner/repository/releases"))
+        .and(query_param("page", "1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(vec![
+            serde_json::json!({ "tag_name": "v2.0.0", "prerelease": false });
+            100
+        ]))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/repos/owner/repository/releases"))
+        .and(query_param("page", "2"))
+        .respond_with(release_response("1.0.0", Vec::new()))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let detail = fixture
+        .service(&server)
+        .update_detail(true)
+        .await
+        .expect("detail");
+    assert!(!detail.has_update);
+    assert_eq!(detail.latest_version, "1.0.0");
+    assert_eq!(detail.notes.as_deref(), Some("notes"));
+    assert!(detail.release_url.is_some());
+}
+
+#[tokio::test]
+async fn update_detail_should_not_use_draft_or_mislabeled_current_release_notes() {
+    for (current, prerelease) in [("1.0.0", false), ("1.0.0-beta.1", true)] {
+        let server = MockServer::start().await;
+        let fixture = Fixture::new();
+        Mock::given(method("GET"))
+            .and(path("/repos/owner/repository/releases"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+                { "tag_name": format!("v{current}"), "prerelease": prerelease, "draft": true, "body": "draft notes" },
+                { "tag_name": format!("v{current}"), "prerelease": !prerelease, "body": "mislabeled notes" },
+                { "tag_name": "v0.9.0", "prerelease": false, "body": "older notes" },
+            ])))
+            .mount(&server)
+            .await;
+        let mut config = fixture.config(&format!("{}/repos", server.uri()));
+        config.version = current.to_owned();
+        let service = ProcessSystemOperations::new(CancellationToken::new(), config);
+
+        let detail = service.update_detail(true).await.expect("detail");
+        assert!(!detail.has_update);
+        assert_eq!(detail.latest_version, current);
+        assert!(detail.notes.is_none());
+        assert!(detail.release_url.is_none());
+    }
+}
+
+#[tokio::test]
 async fn update_checks_should_ignore_other_cycles_downgrades_and_build_metadata() {
     for (current, target) in [
         ("3.12.0-alpha.1", "3.13.0-alpha.2"),
         ("3.12.0-beta.1", "3.12.1-rc.1"),
         ("3.12.0-rc.1", "3.13.0"),
         ("3.12.0-beta.2", "3.12.0-beta.1"),
-        ("3.12.0-exp.2", "3.12.0-exp.2"),
         ("3.12.0", "3.12.0+new-build"),
         ("3.12.0-beta.1+aaa", "3.12.0-beta.1+zzz"),
         ("3.12.0", "3.11.0"),
