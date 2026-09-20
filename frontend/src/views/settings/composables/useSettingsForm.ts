@@ -24,6 +24,9 @@ export function useSettingsForm() {
   const form = reactive({
     openaiClientProfile: null as ClientProfileSelection | null,
     xaiClientProfile: null as XaiClientProfileSelection | null,
+    sessionKeepaliveEnabled: false,
+    sessionRewriteConcurrency: null as number | null,
+    sessionRewriteRetryIntervalSeconds: null as number | null,
     requestLocationEnabled: false,
     requestLocation: { country: '', region: '', city: '', timezone: '' },
     refreshMarginSeconds: null as number | null,
@@ -69,7 +72,7 @@ export function useSettingsForm() {
     mappings.value = saved.value.mappings.map(row => ({ ...row }))
   }
 
-  function numericModel(key: 'refreshMarginSeconds' | 'refreshConcurrency' | 'maxConcurrentPerAccount' | 'requestIntervalMs' | 'maxWaitingPerKey' | 'maxWaitingPerAccount' | 'concurrencyWaitTimeoutSeconds' | 'responsesMaxDecompressedBodyMiB' | 'accountAutoFreezeThreshold' | 'accountAutoFreezeWindowSeconds' | 'accountAutoFreezeDurationSeconds') {
+  function numericModel(key: 'sessionRewriteConcurrency' | 'sessionRewriteRetryIntervalSeconds' | 'refreshMarginSeconds' | 'refreshConcurrency' | 'maxConcurrentPerAccount' | 'requestIntervalMs' | 'maxWaitingPerKey' | 'maxWaitingPerAccount' | 'concurrencyWaitTimeoutSeconds' | 'responsesMaxDecompressedBodyMiB' | 'accountAutoFreezeThreshold' | 'accountAutoFreezeWindowSeconds' | 'accountAutoFreezeDurationSeconds') {
     return computed({
       get: () => (form[key] === null ? '' : String(form[key])),
       set: (value: string) => {
@@ -83,6 +86,8 @@ export function useSettingsForm() {
     })
   }
 
+  const sessionRewriteConcurrencyValue = numericModel('sessionRewriteConcurrency')
+  const sessionRewriteRetryIntervalSecondsValue = numericModel('sessionRewriteRetryIntervalSeconds')
   const refreshMarginSecondsValue = numericModel('refreshMarginSeconds')
   const refreshConcurrencyValue = numericModel('refreshConcurrency')
   const maxConcurrentPerAccountValue = numericModel('maxConcurrentPerAccount')
@@ -105,6 +110,9 @@ export function useSettingsForm() {
 
   function applySettings(data: Awaited<ReturnType<typeof getSettings>>) {
     savedRequestLocation.value = { ...data.requestLocation }
+    form.sessionKeepaliveEnabled = data.sessionKeepaliveEnabled
+    form.sessionRewriteConcurrency = data.sessionRewriteConcurrency
+    form.sessionRewriteRetryIntervalSeconds = data.sessionRewriteRetryIntervalSeconds
     form.requestLocationEnabled = data.requestLocationEnabled
     form.requestLocation = { ...data.requestLocation }
     form.refreshMarginSeconds = data.refreshMarginSeconds
@@ -187,9 +195,14 @@ export function useSettingsForm() {
   async function saveSettings() {
     if (saving.value || loading.value || !savedRequestLocation.value || !form.openaiClientProfile || !form.xaiClientProfile)
       return
-    const { refreshMarginSeconds, refreshConcurrency, maxConcurrentPerAccount, requestIntervalMs, rotationStrategy, maxWaitingPerKey, maxWaitingPerAccount, concurrencyWaitTimeoutSeconds, responsesMaxDecompressedBodyMiB, accountAutoFreezeThreshold, accountAutoFreezeWindowSeconds, accountAutoFreezeDurationSeconds } = form
+    const { sessionRewriteConcurrency, sessionRewriteRetryIntervalSeconds, refreshMarginSeconds, refreshConcurrency, maxConcurrentPerAccount, requestIntervalMs, rotationStrategy, maxWaitingPerKey, maxWaitingPerAccount, concurrencyWaitTimeoutSeconds, responsesMaxDecompressedBodyMiB, accountAutoFreezeThreshold, accountAutoFreezeWindowSeconds, accountAutoFreezeDurationSeconds } = form
     if (refreshMarginSeconds === null || refreshConcurrency === null || maxConcurrentPerAccount === null || requestIntervalMs === null || !rotationStrategy || maxWaitingPerKey === null || maxWaitingPerAccount === null || concurrencyWaitTimeoutSeconds === null) {
       toast.warning('请完整填写并发、队列、凭据刷新参数和调度策略')
+      return
+    }
+    if (sessionRewriteConcurrency === null || !Number.isInteger(sessionRewriteConcurrency) || sessionRewriteConcurrency < 1 || sessionRewriteConcurrency > 10
+      || sessionRewriteRetryIntervalSeconds === null || !Number.isInteger(sessionRewriteRetryIntervalSeconds) || sessionRewriteRetryIntervalSeconds < 1 || sessionRewriteRetryIntervalSeconds > 300) {
+      toast.warning('State 重写并发数应为 1～10 的整数，重试间隔应为 1～300 秒的整数')
       return
     }
     if (responsesMaxDecompressedBodyMiB === null || !Number.isInteger(responsesMaxDecompressedBodyMiB) || responsesMaxDecompressedBodyMiB < 1
@@ -236,6 +249,10 @@ export function useSettingsForm() {
       const result = await updateSettings({
         openaiClientProfile,
         xaiClientProfile,
+        sessionKeepaliveEnabled: form.sessionKeepaliveEnabled,
+        sessionRewriteConcurrency,
+        sessionRewriteRetryIntervalSeconds,
+        sessionKeepaliveRiskConfirmed: form.sessionKeepaliveEnabled,
         requestLocationEnabled: form.requestLocationEnabled,
         requestLocation,
         modelMappings: mappingPayload(),
@@ -282,6 +299,8 @@ export function useSettingsForm() {
     addMapping,
     updateMapping,
     removeMapping,
+    sessionRewriteConcurrencyValue,
+    sessionRewriteRetryIntervalSecondsValue,
     refreshMarginSecondsValue,
     refreshConcurrencyValue,
     maxConcurrentPerAccountValue,

@@ -17,6 +17,7 @@ import RequestLocationCard from './components/RequestLocationCard.vue'
 import RequestQueueCard from './components/RequestQueueCard.vue'
 import RotationStrategyCard from './components/RotationStrategyCard.vue'
 import RuntimeSettingsCard from './components/RuntimeSettingsCard.vue'
+import SessionKeepaliveCard from './components/SessionKeepaliveCard.vue'
 import SettingsAccessSection from './components/SettingsAccessSection.vue'
 import TokenRefreshCard from './components/TokenRefreshCard.vue'
 import { useSettingsForm } from './composables/useSettingsForm'
@@ -60,6 +61,8 @@ const {
   addMapping,
   updateMapping,
   removeMapping,
+  sessionRewriteConcurrencyValue,
+  sessionRewriteRetryIntervalSecondsValue,
   refreshMarginSecondsValue,
   refreshConcurrencyValue,
   maxConcurrentPerAccountValue,
@@ -168,6 +171,7 @@ watch(section, (value) => {
         </template>
 
         <div v-if="visited.has('upstream')" v-show="section === 'upstream'" class="grid min-w-0 gap-5">
+          <SessionKeepaliveCard v-model="form.sessionKeepaliveEnabled" v-model:concurrency="sessionRewriteConcurrencyValue" v-model:retry-interval-seconds="sessionRewriteRetryIntervalSecondsValue" :disabled="disabled" />
           <TokenRefreshCard v-model:refresh-margin-seconds="refreshMarginSecondsValue" v-model:refresh-concurrency="refreshConcurrencyValue" />
           <ClientProfileCard
             v-model:openai="form.openaiClientProfile"

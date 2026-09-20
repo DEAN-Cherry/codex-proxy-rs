@@ -37,6 +37,9 @@ async fn response_json(response: axum::response::Response) -> Value {
 
 fn update_body() -> Value {
     json!({
+        "sessionKeepaliveEnabled": false,
+        "sessionRewriteConcurrency": 3,
+        "sessionRewriteRetryIntervalSeconds": 2,
         "requestLocationEnabled": false,
         "requestLocation": {"country":"US", "region":"Ohio", "city":"Piketon", "timezone":"America/New_York"},
         "modelMappings": {
@@ -104,6 +107,9 @@ fn settings_response_should_cover_the_full_runtime_settings_contract() {
     let settings = RuntimeSettings {
         openai_client_profile: None,
         xai_client_profile: None,
+        session_keepalive_enabled: false,
+        session_rewrite_concurrency: 3,
+        session_rewrite_retry_interval_seconds: 2,
         request_location_enabled: false,
         request_location: Default::default(),
         config_revision: Revision::new(7).expect("revision"),
@@ -150,6 +156,9 @@ fn settings_response_should_cover_the_full_runtime_settings_contract() {
         json!({
             "openaiClientProfile": null,
             "xaiClientProfile": null,
+        "sessionKeepaliveEnabled": false,
+        "sessionRewriteConcurrency": 3,
+        "sessionRewriteRetryIntervalSeconds": 2,
         "requestLocationEnabled": false,
         "requestLocation": {"country":"US", "region":"Ohio", "city":"Piketon", "timezone":"America/New_York"},
             "modelMappings": {
@@ -205,6 +214,9 @@ fn settings_request_and_response_fields_should_stay_in_lockstep() {
     let settings = RuntimeSettings {
         openai_client_profile: None,
         xai_client_profile: None,
+        session_keepalive_enabled: false,
+        session_rewrite_concurrency: 3,
+        session_rewrite_retry_interval_seconds: 2,
         request_location_enabled: false,
         request_location: Default::default(),
         config_revision: Revision::new(7).expect("revision"),
@@ -1047,4 +1059,74 @@ async fn pricing_endpoints_require_administrator_authentication() {
             StatusCode::UNAUTHORIZED
         );
     }
+}
+
+#[test]
+fn settings_update_rejects_removed_oam_proxy_field() {
+    let mut body = update_body();
+    body["oamProxy"] = json!("");
+    assert!(serde_json::from_value::<UpdateRuntimeSettingsRequest>(body).is_err());
+}
+
+#[tokio::test]
+async fn session_rewrite_settings_round_trip_preserve_omitted_and_reject_invalid_values() {
+    let fixture = AdminTestFixture::new().await;
+    fixture.auth.insert_session("valid-session");
+    let mut body = update_body();
+    body["sessionRewriteConcurrency"] = json!(7);
+    body["sessionRewriteRetryIntervalSeconds"] = json!(4);
+    let response = app(fixture.state())
+        .oneshot(request(
+            Method::POST,
+            "/api/admin/settings/update",
+            Some(body.clone()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let result = response_json(response).await;
+    assert_eq!(result["data"]["sessionRewriteConcurrency"], 7);
+    assert_eq!(result["data"]["sessionRewriteRetryIntervalSeconds"], 4);
+    body.as_object_mut()
+        .unwrap()
+        .remove("sessionRewriteConcurrency");
+    body["sessionRewriteRetryIntervalSeconds"] = Value::Null;
+    let response = app(fixture.state())
+        .oneshot(request(
+            Method::POST,
+            "/api/admin/settings/update",
+            Some(body.clone()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let result = response_json(response).await;
+    assert_eq!(result["data"]["sessionRewriteConcurrency"], 7);
+    assert_eq!(result["data"]["sessionRewriteRetryIntervalSeconds"], 4);
+    for (field, value) in [
+        ("sessionRewriteConcurrency", json!(0)),
+        ("sessionRewriteConcurrency", json!(11)),
+        ("sessionRewriteRetryIntervalSeconds", json!(0)),
+        ("sessionRewriteRetryIntervalSeconds", json!(301)),
+        ("sessionRewriteConcurrency", json!(1.5)),
+    ] {
+        let mut invalid = body.clone();
+        invalid[field] = value;
+        let response = app(fixture.state())
+            .oneshot(request(
+                Method::POST,
+                "/api/admin/settings/update",
+                Some(invalid),
+            ))
+            .await
+            .unwrap();
+        assert!(response.status().is_client_error());
+    }
+    let response = app(fixture.state())
+        .oneshot(request(Method::GET, "/api/admin/settings", None))
+        .await
+        .unwrap();
+    let result = response_json(response).await;
+    assert_eq!(result["data"]["sessionRewriteConcurrency"], 7);
+    assert_eq!(result["data"]["sessionRewriteRetryIntervalSeconds"], 4);
 }

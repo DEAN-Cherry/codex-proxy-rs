@@ -329,11 +329,29 @@ impl SettingsService for DefaultSettingsService {
                     .map_err(|error| super::map_provider_error(error, "client profile"))?;
             }
         }
+        if command.session_keepalive_enabled == Some(true)
+            && !command.session_keepalive_risk_confirmed
+        {
+            return Err(AdminError::invalid(
+                "请先确认会话保活可能导致账户异常的风险",
+            ));
+        }
+        let enabling_keepalive = command.session_keepalive_enabled == Some(true);
         let settings = self
             .store
             .replace_runtime_settings(command, context)
             .await
-            .map_err(|error| map_store_error(error, "runtime settings"))?;
+            .map_err(|error| {
+                if enabling_keepalive
+                    && error.kind() == crate::ports::store::AdminStoreErrorKind::Invalid
+                {
+                    AdminError::invalid(
+                        "开启失败，请确认已保存唯一动态代理且测试通过，并检查设置参数",
+                    )
+                } else {
+                    map_store_error(error, "runtime settings")
+                }
+            })?;
         publish_committed(self.snapshot.as_ref(), settings.config_revision).await?;
         Ok(settings)
     }
@@ -376,7 +394,16 @@ impl SettingsService for DefaultSettingsService {
 }
 
 fn validate_settings(command: &ReplaceRuntimeSettings) -> Result<(), AdminError> {
-    let valid = command.request_location.validate().is_ok()
+    let valid = gateway_core::provider_ports::SessionRewritePolicy::try_new(
+        command
+            .session_rewrite_concurrency
+            .unwrap_or(gateway_core::provider_ports::SessionRewritePolicy::default().concurrency()),
+        command.session_rewrite_retry_interval_seconds.unwrap_or(
+            gateway_core::provider_ports::SessionRewritePolicy::default().retry_interval_seconds(),
+        ),
+    )
+    .is_ok()
+        && command.request_location.validate().is_ok()
         && command.responses_max_decompressed_body_bytes > 0
         && isize::try_from(command.responses_max_decompressed_body_bytes).is_ok()
         && command.refresh_margin_seconds > 0

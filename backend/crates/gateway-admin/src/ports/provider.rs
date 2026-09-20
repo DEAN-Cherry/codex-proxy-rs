@@ -115,6 +115,14 @@ pub trait ProviderAdmin: Send + Sync {
         Default::default()
     }
 
+    async fn refresh_session_state(
+        &self,
+        _account_id: &ProviderAccountId,
+        _observer: Option<crate::model::accounts::SessionRefreshObserver>,
+    ) -> Result<crate::model::accounts::SessionStateRefresh, ProviderAdminError> {
+        Err(ProviderAdminError::new(ProviderAdminErrorKind::Unsupported))
+    }
+
     fn provider_kind(&self) -> &ProviderKind;
 
     /// 提供该 Provider 的可选客户端身份；通用管理层不解释内部字段。

@@ -507,7 +507,8 @@ fn disable_fast_uses_only_bound_groups_without_changing_account_scope() {
                 let facts = SnapshotFacts::new(
                     revision(1),
                     revision(1),
-                    SnapshotSettingsFacts::new(3, 0, "smart", BTreeMap::new(), None, None),
+                    SnapshotSettingsFacts::new(3, 0, "smart", BTreeMap::new(), None, None)
+                        .with_session_keepalive_enabled(disable_fast),
                     vec![SnapshotClientPolicyFacts::new(
                         ClientApiKeyId::new("key_fast_policy").unwrap(),
                         PlaintextClientApiKey::new("sk_fast_policy").unwrap(),
@@ -563,6 +564,7 @@ fn disable_fast_uses_only_bound_groups_without_changing_account_scope() {
                         &Default::default(),
                     )
                     .unwrap();
+                assert_eq!(plan.session_keepalive_enabled(), disable_fast);
                 assert_eq!(
                     plan.disable_fast(),
                     disable_fast && bound,

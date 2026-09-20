@@ -93,6 +93,9 @@ pub enum AccountGroupFilter {
 /// 账号公共存储投影；Provider 专属字段不进入此结构。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AccountRecord {
+    pub enable_session_keepalive: bool,
+    pub session_keepalive_models: Vec<String>,
+    pub session_keepalive_expected_length: Option<u32>,
     pub id: String,
     pub provider_kind: ProviderKind,
     pub groups: Vec<AccountGroupRef>,
@@ -229,6 +232,9 @@ pub struct AccountSummary {
 /// 账号可编辑事实的一次性替换命令。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UpdateAccount {
+    pub enable_session_keepalive: Option<bool>,
+    pub session_keepalive_models: Option<Vec<String>>,
+    pub session_keepalive_expected_length: Option<Option<u32>>,
     pub account_id: String,
     /// 缺省保留备注；空字符串清空备注。
     pub notes: Option<String>,
@@ -304,3 +310,21 @@ pub enum AccountConnectionTestEvent {
 /// 每次连接测试独占的有限事件流。
 pub type AccountConnectionTestEventStream =
     Pin<Box<dyn Stream<Item = AccountConnectionTestEvent> + Send + 'static>>;
+
+/// 每个模型完成缓存写入或终止后通知调用方，不传递凭证原文。
+pub type SessionRefreshObserver = std::sync::Arc<dyn Fn(SessionModelRefresh) + Send + Sync>;
+
+/// 手动重写的逐模型结果，不承载 State 或鉴权原文。
+#[derive(Debug, Clone)]
+pub struct SessionModelRefresh {
+    pub model: String,
+    pub refreshed_at: Option<DateTime<Utc>>,
+    pub expire_at: Option<i64>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SessionStateRefresh {
+    pub account_id: String,
+    pub models: Vec<SessionModelRefresh>,
+}

@@ -199,6 +199,8 @@ Images 与 standalone Search 是 OpenAI Provider 自有端点：两者都不参�
 
 ## 5. Provider 与协议边界
 
+OpenAI 的可选 State 重写由私有 `session_manager` 持有探测生命周期，通过 Core 的 `ProviderSessionTicketPort` 在 Store 的 Redis 适配器中保存账号＋模型票据。Provider Bundle 共享该服务给受 Host 监督的 Worker、管理端口、选号器和发送前检查；Core 提供账号／全局开关、模型选择与运行策略合同。运维 Client 独立绑定测试通过的动态代理，强制 HTTP/1.1 并禁止连接复用；业务 HTTP/WS 出口不变。功能默认关闭，启用后受管理的账号／模型缺少符合当前长度规则的有效票据时按 fail-closed 排除。失败预算按账号和模型独立维护，后台不会自动重置已耗尽的预算。协议准入、TTL 和恢复边界见 [会话 State 刷新](api.md#会话-state-刷新)。
+
 Core 只理解 `Operation`、能力要求、Provider 候选、稳定错误和 canonical event，不读取 Provider SDK
 类型。Provider 独占 credential schema、OAuth、账号选择、模型目录、额度投影和上游 transport。
 
@@ -263,7 +265,7 @@ client，OIDC 的 JWKS 缓存与单飞归属对应出口状态。自动刷新提
 出口，不从 token-only 路径绕过代理；JWKS 过期或获取失败仍不使用 stale fallback。
 
 代理独立保存和测试，通过 `outboundProxyId` 绑定账号；账号保留解析后的 URL 供 Provider 使用。
-出口测试结果属于诊断信息，不作为选择、授权或导入绑定的准入条件。
+普通代理的出口测试结果属于诊断信息，不作为选择、授权或导入绑定的准入条件。动态代理全局仅一个，禁止业务绑定，只供 State 重写，测试成功是其重写准入条件；地址变化后必须重新测试。
 连接配置改变时在同一事务内同步关联账号并清除旧测试结果，已绑定的代理不可删除。
 关联账号支持单独移除：在原子更新中校验当前代理 ID，只清除账号的代理 ID 和 URL，
 保留账号其他设置；提交配置版本与审计后复用快照发布流程，使后续请求使用直连。

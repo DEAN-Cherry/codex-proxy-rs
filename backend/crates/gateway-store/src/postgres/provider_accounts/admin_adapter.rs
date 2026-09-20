@@ -293,6 +293,12 @@ impl PgAdminAccountStore {
         if let Some(settings) = &settings {
             changed_fields
                 .extend(["enabled", "concurrency_limit", "weight", "groups"].map(str::to_owned));
+            if settings.session_keepalive_models.is_some() {
+                changed_fields.push("session_keepalive_models".to_owned());
+            }
+            if settings.enable_session_keepalive.is_some() {
+                changed_fields.push("enable_session_keepalive".to_owned());
+            }
             if settings.model_access.is_some() {
                 changed_fields.push("model_access".to_owned());
             }
@@ -700,6 +706,15 @@ impl AccountStore for PgAdminAccountStore {
             "weight".to_owned(),
             "groups".to_owned(),
         ];
+        if command.session_keepalive_models.is_some() {
+            changed_fields.push("session_keepalive_models".to_owned());
+        }
+        if command.session_keepalive_expected_length.is_some() {
+            changed_fields.push("session_keepalive_expected_length".to_owned());
+        }
+        if command.enable_session_keepalive.is_some() {
+            changed_fields.push("enable_session_keepalive".to_owned());
+        }
         if command.model_access.is_some() {
             changed_fields.push("model_access".to_owned());
         }
@@ -713,6 +728,9 @@ impl AccountStore for PgAdminAccountStore {
             .accounts
             .batch_update_provider_accounts_admin(BatchUpdateProviderAccountsAdmin {
                 account_ids: vec![command.account_id.clone()],
+                enable_session_keepalive: command.enable_session_keepalive,
+                session_keepalive_models: command.session_keepalive_models,
+                session_keepalive_expected_length: command.session_keepalive_expected_length,
                 notes: command.notes,
                 enabled: Some(command.enabled),
                 concurrency_limit: Some(command.concurrency_limit),
@@ -879,6 +897,9 @@ impl AccountStore for PgAdminAccountStore {
             .accounts
             .batch_update_provider_accounts_admin(BatchUpdateProviderAccountsAdmin {
                 account_ids: command.account_ids,
+                enable_session_keepalive: None,
+                session_keepalive_models: None,
+                session_keepalive_expected_length: None,
                 notes: None,
                 enabled: command.enabled,
                 concurrency_limit: command.concurrency_limit,

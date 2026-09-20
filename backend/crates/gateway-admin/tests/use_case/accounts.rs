@@ -999,6 +999,9 @@ impl SettingsStore for StaticSettingsStore {
         Ok(RuntimeSettings {
             openai_client_profile: None,
             xai_client_profile: None,
+            session_keepalive_enabled: false,
+            session_rewrite_concurrency: 3,
+            session_rewrite_retry_interval_seconds: 2,
             request_location_enabled: false,
             request_location: Default::default(),
             config_revision: revision(1),
@@ -1529,6 +1532,9 @@ async fn accounts_update_should_commit_then_release_disabled_account_and_publish
         .update(
             &context("update-request"),
             UpdateAccount {
+                enable_session_keepalive: None,
+                session_keepalive_models: None,
+                session_keepalive_expected_length: None,
                 notes: None,
                 model_access: Default::default(),
                 outbound_proxy: None,
@@ -1568,6 +1574,9 @@ async fn accounts_update_should_not_notify_provider_when_store_commit_fails() {
         .update(
             &context("update-failure"),
             UpdateAccount {
+                enable_session_keepalive: None,
+                session_keepalive_models: None,
+                session_keepalive_expected_length: None,
                 notes: None,
                 model_access: Default::default(),
                 outbound_proxy: None,
@@ -2673,6 +2682,9 @@ fn quota_local_usage(account_id: &str, total_tokens: u64) -> AccountUsage {
 pub(super) fn account_record(kind: &str) -> AccountRecord {
     let now = Utc::now();
     AccountRecord {
+        enable_session_keepalive: false,
+        session_keepalive_models: vec!["5.6 sol".into(), "6".into()],
+        session_keepalive_expected_length: None,
         notes: None,
         model_access: Default::default(),
         outbound_proxy: None,

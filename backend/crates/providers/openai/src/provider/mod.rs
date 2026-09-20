@@ -138,6 +138,7 @@ pub enum CodexProviderConfigError {
 }
 
 pub struct CodexProvider {
+    sessions: Option<Arc<crate::SessionManager>>,
     selector: Arc<CodexCredentialSelector>,
     catalog: Arc<CodexCredentialCatalogService>,
     quota: Arc<CodexCredentialQuotaService>,
@@ -192,6 +193,7 @@ impl CodexProvider {
         let client =
             CodexBackendClient::new(http, base_url, profile).with_websocket_pool(websocket_pool);
         Ok(Self {
+            sessions: None,
             selector,
             catalog,
             quota,
@@ -205,6 +207,12 @@ impl CodexProvider {
             session_transport_recovery: CodexSessionTransportRecovery::default(),
             stream_max_retries,
         })
+    }
+
+    #[must_use]
+    pub fn with_session_manager(mut self, sessions: Arc<crate::SessionManager>) -> Self {
+        self.sessions = Some(sessions);
+        self
     }
 
     pub(crate) fn with_session_identity(mut self, identity: CodexSessionIdentity) -> Self {
@@ -549,6 +557,16 @@ impl Provider for CodexProvider {
             lease.installation_id(),
             account_scope,
         );
+        if context.session_keepalive_enabled()
+            && let Some(sessions) = &self.sessions
+            && !sessions
+                .rewrite(lease.account(), &mut upstream_request)
+                .await
+        {
+            return Err(map_selection_error(
+                CredentialSelectionError::NoEligibleCredential,
+            ));
+        }
         // 每次执行从原始请求编码，选定出口后再覆盖，避免换号时携带上次位置。
         if let Some(location) = lease
             .account()

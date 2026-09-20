@@ -214,6 +214,13 @@ impl CompleteAccountAuthorizationRequest {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct UpdateAccountRequest {
+    pub enable_session_keepalive: Option<bool>,
+    pub session_keepalive_models: Option<Vec<String>>,
+    #[serde(
+        default,
+        deserialize_with = "super::wire::deserialize_optional_nullable"
+    )]
+    pub session_keepalive_expected_length: Option<Option<u32>>,
     pub outbound_proxy_id: Option<String>,
     pub outbound_proxy_url: Option<super::wire::AccountProxyUpdate>,
     pub account_id: String,
@@ -233,12 +240,23 @@ impl UpdateAccountRequest {
         parse_concurrency_limit(self.concurrency_limit)?;
         parse_account_weight(self.weight)?;
         validate_wire_group_ids(&self.group_ids)?;
+        if let Some(Some(length)) = self.session_keepalive_expected_length {
+            gateway_core::account::validate_session_keepalive_expected_length(length)
+                .map_err(|_| WireValidationError::new("sessionKeepaliveExpectedLength"))?;
+        }
         Ok(())
     }
 
     pub(super) fn into_command(self) -> Result<UpdateAccount, WireValidationError> {
         self.validate()?;
+        if let Some(models) = &self.session_keepalive_models {
+            gateway_core::account::validate_session_keepalive_models(models)
+                .map_err(|_| WireValidationError::new("sessionKeepaliveModels"))?;
+        }
         Ok(UpdateAccount {
+            enable_session_keepalive: self.enable_session_keepalive,
+            session_keepalive_models: self.session_keepalive_models,
+            session_keepalive_expected_length: self.session_keepalive_expected_length,
             outbound_proxy: super::wire::proxy_selection(
                 self.outbound_proxy_id,
                 self.outbound_proxy_url,

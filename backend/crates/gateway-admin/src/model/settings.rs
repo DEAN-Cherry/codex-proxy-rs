@@ -19,6 +19,9 @@ pub use gateway_core::account::RotationStrategy;
 pub struct RuntimeSettings {
     pub openai_client_profile: Option<gateway_core::account::OpaqueProviderData>,
     pub xai_client_profile: Option<gateway_core::account::OpaqueProviderData>,
+    pub session_keepalive_enabled: bool,
+    pub session_rewrite_concurrency: u32,
+    pub session_rewrite_retry_interval_seconds: u32,
     pub config_revision: Revision,
     pub request_location_enabled: bool,
     pub request_location: gateway_core::account::RequestLocation,
@@ -52,6 +55,10 @@ pub struct RuntimeSettings {
 pub struct ReplaceRuntimeSettings {
     pub openai_client_profile: Option<gateway_core::account::OpaqueProviderData>,
     pub xai_client_profile: Option<gateway_core::account::OpaqueProviderData>,
+    pub session_keepalive_enabled: Option<bool>,
+    pub session_rewrite_concurrency: Option<u32>,
+    pub session_rewrite_retry_interval_seconds: Option<u32>,
+    pub session_keepalive_risk_confirmed: bool,
     pub request_location_enabled: bool,
     pub request_location: gateway_core::account::RequestLocation,
     pub model_mappings: ModelMappings,

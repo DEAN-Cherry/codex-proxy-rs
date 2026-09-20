@@ -9,6 +9,9 @@ export interface RuntimeSettings {
   openaiClientProfile: ClientProfileSelection
   xaiClientProfile: XaiClientProfileSelection
 
+  sessionKeepaliveEnabled: boolean
+  sessionRewriteConcurrency: number
+  sessionRewriteRetryIntervalSeconds: number
   requestLocationEnabled: boolean
   requestLocation: RequestLocation
   modelMappings: Record<string, string>
@@ -76,7 +79,7 @@ export function getSettings(options: RequestOptions = {}) {
   })
 }
 
-type UpdateSettingsParam = Omit<RuntimeSettings, 'updatedAt'>
+type UpdateSettingsParam = Omit<RuntimeSettings, 'updatedAt'> & { sessionKeepaliveRiskConfirmed?: boolean }
 
 export function updateSettings(data: UpdateSettingsParam) {
   return request<RuntimeSettings>({

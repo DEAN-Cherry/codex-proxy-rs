@@ -1,3 +1,4 @@
+mod credentials;
 mod handlers;
 mod import_tasks;
 mod presenter;

@@ -11,6 +11,9 @@ fn settings_with_margin(refresh_margin_seconds: u64) -> RuntimeSettingsUpdate {
     RuntimeSettingsUpdate {
         openai_client_profile: None,
         xai_client_profile: None,
+        session_keepalive_enabled: None,
+        session_rewrite_concurrency: None,
+        session_rewrite_retry_interval_seconds: None,
         request_location_enabled: false,
         request_location: Default::default(),
         admin_api_key: None,
@@ -550,6 +553,130 @@ async fn xai_profile_initialization_and_updates_preserve_other_providers() {
             .await
             .unwrap(),
         document("edited")
+    );
+    database.close().await;
+}
+
+#[tokio::test]
+async fn keepalive_requires_tested_dynamic_proxy_and_defaults_off() {
+    use gateway_core::provider_ports::ProviderRuntimePolicyPort;
+    let Some(database) = TestDatabase::create("keepalive_gate").await else {
+        return;
+    };
+    let repository = PgRuntimeSettingsRepository::new(database.pool.clone());
+    assert!(
+        !repository
+            .load_runtime_settings()
+            .await
+            .unwrap()
+            .session_keepalive_enabled
+    );
+    assert!(
+        repository
+            .load_session_keepalive_proxy()
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let mut enabled = settings_with_margin(3600);
+    enabled.session_keepalive_enabled = Some(true);
+    assert!(
+        repository
+            .update_runtime_settings(enabled.clone())
+            .await
+            .is_err()
+    );
+    sqlx::query("insert into outbound_proxies (id, name, proxy_url, is_dynamic) values ('dynamic', 'test', 'http://127.0.0.1:8181', true)")
+        .execute(&database.pool).await.unwrap();
+    assert!(
+        repository
+            .update_runtime_settings(enabled.clone())
+            .await
+            .is_err()
+    );
+    sqlx::query("update outbound_proxies set last_test_success = true where id = 'dynamic'")
+        .execute(&database.pool)
+        .await
+        .unwrap();
+    repository.update_runtime_settings(enabled).await.unwrap();
+    assert_eq!(
+        repository
+            .load_session_keepalive_proxy()
+            .await
+            .unwrap()
+            .unwrap()
+            .expose_url(),
+        "http://127.0.0.1:8181/"
+    );
+    use gateway_store::postgres::{PgRuntimeSnapshotRepository, RuntimeSnapshotRepository};
+    assert!(
+        PgRuntimeSnapshotRepository::new(database.pool.clone())
+            .load_runtime_snapshot()
+            .await
+            .unwrap()
+            .settings
+            .session_keepalive_enabled
+    );
+    sqlx::query("update outbound_proxies set last_test_success = false where id = 'dynamic'")
+        .execute(&database.pool)
+        .await
+        .unwrap();
+    assert!(
+        repository
+            .load_session_keepalive_proxy()
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let mut disabled = settings_with_margin(3600);
+    disabled.session_keepalive_enabled = Some(false);
+    repository.update_runtime_settings(disabled).await.unwrap();
+    assert!(
+        !repository
+            .load_runtime_settings()
+            .await
+            .unwrap()
+            .session_keepalive_enabled
+    );
+    database.close().await;
+}
+
+#[tokio::test]
+async fn session_rewrite_settings_persist_and_drive_provider_policy() {
+    use gateway_core::provider_ports::ProviderRuntimePolicyPort;
+    let Some(database) = TestDatabase::create("session_rewrite_policy").await else {
+        return;
+    };
+    let repository = PgRuntimeSettingsRepository::new(database.pool.clone());
+    let defaults = repository.load_session_rewrite_policy().await.unwrap();
+    assert_eq!(defaults.concurrency(), 3);
+    assert_eq!(defaults.retry_interval_seconds(), 6);
+    let mut update = settings_with_margin(3_600);
+    update.session_rewrite_concurrency = Some(8);
+    update.session_rewrite_retry_interval_seconds = Some(4);
+    repository.update_runtime_settings(update).await.unwrap();
+    repository
+        .update_runtime_settings(settings_with_margin(3_600))
+        .await
+        .unwrap();
+    let reloaded = PgRuntimeSettingsRepository::new(database.pool.clone());
+    let settings = reloaded.load_runtime_settings().await.unwrap();
+    assert_eq!(settings.session_rewrite_concurrency, 8);
+    assert_eq!(settings.session_rewrite_retry_interval_seconds, 4);
+    let policy = reloaded.load_session_rewrite_policy().await.unwrap();
+    assert_eq!(policy.concurrency(), 8);
+    assert_eq!(policy.retry_interval_seconds(), 4);
+    for (concurrency, interval) in [(0, 1), (11, 1), (1, 0), (1, 301)] {
+        let mut invalid = settings_with_margin(3_600);
+        invalid.session_rewrite_concurrency = Some(concurrency);
+        invalid.session_rewrite_retry_interval_seconds = Some(interval);
+        assert!(repository.update_runtime_settings(invalid).await.is_err());
+        assert!(sqlx::query("update runtime_settings set session_rewrite_concurrency = $1, session_rewrite_retry_interval_seconds = $2")
+            .bind(i64::from(concurrency)).bind(i64::from(interval)).execute(&database.pool).await.is_err());
+    }
+    assert_eq!(
+        reloaded.load_session_rewrite_policy().await.unwrap(),
+        policy
     );
     database.close().await;
 }

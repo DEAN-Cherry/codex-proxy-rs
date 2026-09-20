@@ -774,6 +774,9 @@ impl SettingsStore for FixtureSettingsStore {
         Ok(RuntimeSettings {
             openai_client_profile: None,
             xai_client_profile: None,
+            session_keepalive_enabled: false,
+            session_rewrite_concurrency: 3,
+            session_rewrite_retry_interval_seconds: 2,
             request_location_enabled: false,
             request_location: Default::default(),
             config_revision: Revision::new(1).expect("revision"),

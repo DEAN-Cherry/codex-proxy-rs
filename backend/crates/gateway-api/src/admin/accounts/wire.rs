@@ -65,7 +65,7 @@ pub struct BatchUpdateAccountsRequest {
     pub outbound_proxy_url: Option<AccountProxyUpdate>,
     pub account_ids: Vec<String>,
     pub enabled: Option<bool>,
-    #[serde(default, deserialize_with = "deserialize_optional_nullable_limit")]
+    #[serde(default, deserialize_with = "deserialize_optional_nullable")]
     pub concurrency_limit: Option<Option<u64>>,
     pub weight: Option<u64>,
     pub model_access: Option<gateway_core::account::AccountModelAccess>,
@@ -92,10 +92,14 @@ impl From<AccountsUpdateResult> for BatchUpdatedAccountsData {
     }
 }
 
-fn deserialize_optional_nullable_limit<'de, D: serde::Deserializer<'de>>(
+pub(super) fn deserialize_optional_nullable<'de, D, T>(
     deserializer: D,
-) -> Result<Option<Option<u64>>, D::Error> {
-    Option::<u64>::deserialize(deserializer).map(Some)
+) -> Result<Option<Option<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer).map(Some)
 }
 
 impl BatchUpdateAccountsRequest {
@@ -266,6 +270,9 @@ pub struct AccountSummaryView {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AccountView {
+    pub enable_session_keepalive: bool,
+    pub session_keepalive_models: Vec<String>,
+    pub session_keepalive_expected_length: Option<u32>,
     pub outbound_proxy_endpoint: Option<String>,
     pub id: String,
     pub name: String,

@@ -69,3 +69,5 @@ pub use self::{
         CodexWebSocketPool, CodexWebSocketPoolConfig, CodexWebSocketPoolKey, WebSocketPoolDecision,
     },
 };
+
+pub(crate) use client::retry_after_seconds;

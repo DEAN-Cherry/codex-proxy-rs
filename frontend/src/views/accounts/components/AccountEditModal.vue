@@ -5,12 +5,15 @@ import type { AccountGroup, AccountModelAccess } from '@/api'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseFormItem from '@/components/base/BaseForm/FormItem.vue'
+import BaseInput from '@/components/base/BaseInput.vue'
 import BaseModal from '@/components/base/BaseModal/index.vue'
+import BaseSwitch from '@/components/base/BaseSwitch.vue'
 import BaseTextarea from '@/components/base/BaseTextarea.vue'
 import ProviderIconGroup from '@/components/ProviderIconGroup.vue'
 import AccountApiKeyFields from './AccountApiKeyFields.vue'
 import AccountIdentityCell from './AccountIdentityCell.vue'
 import AccountPlanBadge from './AccountPlanBadge.vue'
+import AccountSessionModelsField from './AccountSessionModelsField.vue'
 import AccountSettingsFields from './AccountSettingsFields.vue'
 
 defineProps<{
@@ -30,6 +33,9 @@ const open = defineModel<boolean>({ required: true })
 const apiKey = defineModel<ApiKeyAccountForm>('apiKey', { required: true })
 const notes = defineModel<string>('notes', { required: true })
 const enabled = defineModel<boolean>('enabled', { required: true })
+const sessionKeepaliveModels = defineModel<string[]>('sessionKeepaliveModels', { required: true })
+const sessionKeepaliveExpectedLength = defineModel<string>('sessionKeepaliveExpectedLength', { required: true })
+const enableSessionKeepalive = defineModel<boolean>('enableSessionKeepalive', { required: true })
 const concurrencyLimit = defineModel<string>('concurrencyLimit', { required: true })
 const modelAccess = defineModel<AccountModelAccess | undefined>('modelAccess', { required: true })
 const weight = defineModel<string>('weight', { required: true })
@@ -90,6 +96,29 @@ const selectedGroupIds = defineModel<string[]>('selectedGroupIds', { required: t
         :endpoint="account.outboundProxyEndpoint"
         :account-id="account.id"
       />
+
+      <div v-if="account.provider === 'openai' && account.authenticationKind === 'oauth'" class="flex items-center justify-between gap-3">
+        <div class="grid gap-1">
+          <span class="text-cp font-medium text-cp-text-secondary">State 重写</span>
+          <span class="text-cp-sm text-cp-text-tertiary">使用全局动态代理获取各模型的 State，须先在设置页开启</span>
+        </div>
+        <BaseSwitch v-model="enableSessionKeepalive" label="切换账号 State 重写" :disabled="saving" />
+      </div>
+
+      <AccountSessionModelsField v-if="enableSessionKeepalive && account.provider === 'openai' && account.authenticationKind === 'oauth'" v-model="sessionKeepaliveModels" :account-id="account.id" :disabled="saving" />
+
+      <BaseFormItem
+        v-if="enableSessionKeepalive && account.provider === 'openai' && account.authenticationKind === 'oauth'"
+        label="期望 State 长度（字节）"
+        description="可填 100～2000 的整数，按该账号实际返回值配置"
+      >
+        <BaseInput
+          v-model="sessionKeepaliveExpectedLength"
+          placeholder="留空接受 200～600 字节"
+          inputmode="numeric"
+          :disabled="saving"
+        />
+      </BaseFormItem>
 
       <BaseFormItem label="备注">
         <BaseTextarea

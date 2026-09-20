@@ -21,6 +21,9 @@ use crate::{Revision, StoreError, StoreResult, postgres_unavailable};
 pub struct RuntimeSettings {
     pub openai_client_profile: Option<gateway_core::account::OpaqueProviderData>,
     pub xai_client_profile: Option<gateway_core::account::OpaqueProviderData>,
+    pub session_keepalive_enabled: bool,
+    pub session_rewrite_concurrency: u32,
+    pub session_rewrite_retry_interval_seconds: u32,
     pub config_revision: Revision,
     pub admin_api_key: Option<String>,
     pub refresh_margin_seconds: u64,
@@ -112,6 +115,9 @@ impl fmt::Debug for RuntimeSettings {
 pub struct RuntimeSettingsUpdate {
     pub openai_client_profile: Option<gateway_core::account::OpaqueProviderData>,
     pub xai_client_profile: Option<gateway_core::account::OpaqueProviderData>,
+    pub session_keepalive_enabled: Option<bool>,
+    pub session_rewrite_concurrency: Option<u32>,
+    pub session_rewrite_retry_interval_seconds: Option<u32>,
     pub admin_api_key: Option<String>,
     pub refresh_margin_seconds: u64,
     pub refresh_concurrency: u32,
@@ -157,7 +163,17 @@ impl fmt::Debug for RuntimeSettingsUpdate {
 
 impl RuntimeSettingsUpdate {
     pub fn validate(&self) -> StoreResult<()> {
-        if self.request_location.validate().is_err()
+        if gateway_core::provider_ports::SessionRewritePolicy::try_new(
+            self.session_rewrite_concurrency.unwrap_or(
+                gateway_core::provider_ports::SessionRewritePolicy::default().concurrency(),
+            ),
+            self.session_rewrite_retry_interval_seconds.unwrap_or(
+                gateway_core::provider_ports::SessionRewritePolicy::default()
+                    .retry_interval_seconds(),
+            ),
+        )
+        .is_err()
+            || self.request_location.validate().is_err()
             || self.responses_max_decompressed_body_bytes == 0
             || isize::try_from(self.responses_max_decompressed_body_bytes).is_err()
             || self.refresh_margin_seconds == 0
@@ -241,7 +257,7 @@ pub(crate) async fn load_runtime_settings_from_pool(pool: &PgPool) -> StoreResul
                     account_auto_freeze_enabled, account_auto_freeze_threshold,
                     account_auto_freeze_window_seconds, account_auto_freeze_duration_seconds,
                     account_auto_freeze_probe_enabled, account_auto_freeze_probe_model,
-                    account_auto_freeze_adaptive_concurrency
+                    account_auto_freeze_adaptive_concurrency, session_keepalive_enabled, session_rewrite_concurrency, session_rewrite_retry_interval_seconds
              from runtime_settings where id = 1",
         )
     .fetch_optional(pool)
@@ -276,6 +292,41 @@ impl ProviderRuntimePolicyPort for PgRuntimeSettingsRepository {
             .fetch_one(&self.pool).await
             .map_err(|_| provider_unavailable("initialize Provider request profile"))?;
             Ok(gateway_core::account::OpaqueProviderData::new(document.0))
+        })
+    }
+
+    fn load_session_rewrite_policy(
+        &self,
+    ) -> futures::future::BoxFuture<
+        '_,
+        Result<gateway_core::provider_ports::SessionRewritePolicy, ProviderStoreError>,
+    > {
+        Box::pin(async move {
+            let (concurrency, interval): (i64, i64) = sqlx::query_as("select session_rewrite_concurrency, session_rewrite_retry_interval_seconds from runtime_settings where id = 1")
+                .fetch_one(&self.pool).await.map_err(|_| provider_unavailable("load session rewrite policy"))?;
+            gateway_core::provider_ports::SessionRewritePolicy::try_new(
+                u32::try_from(concurrency)
+                    .map_err(|_| provider_invalid("decode session rewrite concurrency"))?,
+                u32::try_from(interval)
+                    .map_err(|_| provider_invalid("decode session rewrite interval"))?,
+            )
+        })
+    }
+
+    fn load_session_keepalive_proxy(
+        &self,
+    ) -> futures::future::BoxFuture<
+        '_,
+        Result<Option<gateway_core::account::OutboundProxy>, ProviderStoreError>,
+    > {
+        Box::pin(async move {
+            let url: Option<String> = sqlx::query_scalar("select p.proxy_url from outbound_proxies p cross join runtime_settings r where r.id = 1 and r.session_keepalive_enabled and p.is_dynamic and p.last_test_success = true")
+                .fetch_optional(&self.pool).await.map_err(|_| provider_unavailable("load dynamic proxy"))?;
+            url.map(|url| {
+                gateway_core::account::OutboundProxy::parse(&url)
+                    .map_err(|_| provider_invalid("decode dynamic proxy"))
+            })
+            .transpose()
         })
     }
 
@@ -327,7 +378,7 @@ pub(crate) async fn load_runtime_settings_in_transaction(
                 account_auto_freeze_enabled, account_auto_freeze_threshold,
                 account_auto_freeze_window_seconds, account_auto_freeze_duration_seconds,
                 account_auto_freeze_probe_enabled, account_auto_freeze_probe_model,
-                account_auto_freeze_adaptive_concurrency
+                account_auto_freeze_adaptive_concurrency, session_keepalive_enabled, session_rewrite_concurrency, session_rewrite_retry_interval_seconds
          from runtime_settings where id = 1",
     )
     .fetch_optional(&mut **transaction)
@@ -345,6 +396,20 @@ pub(crate) async fn update_runtime_settings_in_transaction(
     update: &RuntimeSettingsUpdate,
 ) -> StoreResult<Revision> {
     update.validate()?;
+    if update.session_keepalive_enabled == Some(true) {
+        sqlx::query("select id from runtime_settings where id = 1 for update")
+            .execute(&mut **transaction)
+            .await
+            .map_err(|_| postgres_unavailable("lock runtime settings"))?;
+        let ready: bool = sqlx::query_scalar("select exists(select 1 from outbound_proxies where is_dynamic and last_test_success = true)")
+            .fetch_one(&mut **transaction).await.map_err(|_| postgres_unavailable("validate dynamic proxy"))?;
+        if !ready {
+            return Err(StoreError::InvalidData {
+                entity: "runtime settings",
+                message: "请先在代理管理中保存动态代理，并测试通过后再开启会话保活".to_owned(),
+            });
+        }
+    }
     let refresh_margin_seconds =
         i64::try_from(update.refresh_margin_seconds).map_err(|_| invalid_numeric())?;
     let next = sqlx::query_scalar::<_, i64>(
@@ -378,6 +443,9 @@ pub(crate) async fn update_runtime_settings_in_transaction(
                      provider_request_profiles_json = provider_request_profiles_json
                          || case when $26::jsonb is null then '{}'::jsonb else jsonb_build_object('openai', $26::jsonb) end
                          || case when $27::jsonb is null then '{}'::jsonb else jsonb_build_object('xai', $27::jsonb) end,
+                     session_keepalive_enabled = coalesce($28, session_keepalive_enabled),
+                     session_rewrite_concurrency = coalesce($29, session_rewrite_concurrency),
+                     session_rewrite_retry_interval_seconds = coalesce($30, session_rewrite_retry_interval_seconds),
 	                 updated_at = now()
 	             where id = 1
 	             returning config_revision",
@@ -421,6 +489,9 @@ pub(crate) async fn update_runtime_settings_in_transaction(
     )
     .bind(update.openai_client_profile.as_ref().map(|profile| sqlx::types::Json(profile.expose_to_provider())))
     .bind(update.xai_client_profile.as_ref().map(|profile| sqlx::types::Json(profile.expose_to_provider())))
+    .bind(update.session_keepalive_enabled)
+    .bind(update.session_rewrite_concurrency.map(i64::from))
+    .bind(update.session_rewrite_retry_interval_seconds.map(i64::from))
     .fetch_optional(&mut **transaction)
     .await
     .map_err(|_| postgres_unavailable("update runtime settings in transaction"))?
@@ -473,6 +544,9 @@ struct RuntimeSettingsRow {
     provider_request_profiles_json: sqlx::types::Json<
         std::collections::BTreeMap<String, serde_json::Map<String, serde_json::Value>>,
     >,
+    session_keepalive_enabled: bool,
+    session_rewrite_concurrency: i64,
+    session_rewrite_retry_interval_seconds: i64,
     config_revision: i64,
     admin_api_key: Option<String>,
     refresh_margin_seconds: i64,
@@ -514,6 +588,9 @@ fn runtime_settings_from_row(mut row: RuntimeSettingsRow) -> StoreResult<Runtime
             .0
             .remove("xai")
             .map(gateway_core::account::OpaqueProviderData::new),
+        session_keepalive_enabled: row.session_keepalive_enabled,
+        session_rewrite_concurrency: to_u32(row.session_rewrite_concurrency)?,
+        session_rewrite_retry_interval_seconds: to_u32(row.session_rewrite_retry_interval_seconds)?,
         config_revision: Revision::new(to_u64(row.config_revision)?)?,
         admin_api_key: row.admin_api_key,
         refresh_margin_seconds: to_u64(row.refresh_margin_seconds)?,

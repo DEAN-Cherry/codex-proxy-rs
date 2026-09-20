@@ -522,6 +522,15 @@ impl SettingsStore for MemorySettingsStore {
         let updated = RuntimeSettings {
             openai_client_profile: None,
             xai_client_profile: None,
+            session_rewrite_concurrency: command
+                .session_rewrite_concurrency
+                .unwrap_or(settings.session_rewrite_concurrency),
+            session_rewrite_retry_interval_seconds: command
+                .session_rewrite_retry_interval_seconds
+                .unwrap_or(settings.session_rewrite_retry_interval_seconds),
+            session_keepalive_enabled: command
+                .session_keepalive_enabled
+                .unwrap_or(settings.session_keepalive_enabled),
             request_location_enabled: command.request_location_enabled,
             request_location: command.request_location,
             config_revision: next_revision(settings.config_revision),
@@ -1442,6 +1451,9 @@ fn test_runtime_settings() -> RuntimeSettings {
     RuntimeSettings {
         openai_client_profile: None,
         xai_client_profile: None,
+        session_keepalive_enabled: false,
+        session_rewrite_concurrency: 3,
+        session_rewrite_retry_interval_seconds: 2,
         request_location_enabled: false,
         request_location: Default::default(),
         config_revision: Revision::new(7).expect("revision"),

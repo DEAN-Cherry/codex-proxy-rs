@@ -74,7 +74,7 @@ async fn openai_bundle_exposes_one_core_provider_and_drains_worker_contributions
     assert_eq!(bundle.core_provider().name(), "openai");
     assert_eq!(bundle.admin_provider().provider_kind().as_str(), "openai");
     let contributions = bundle.take_worker_contributions();
-    assert_eq!(contributions.len(), 7);
+    assert_eq!(contributions.len(), 8);
     assert!(
         contributions
             .iter()
@@ -1528,6 +1528,9 @@ fn provider_ports_with_catalog(
 fn account_record(account: &ProviderAccount) -> AccountRecord {
     let now = Utc::now();
     AccountRecord {
+        enable_session_keepalive: false,
+        session_keepalive_models: vec!["5.6 sol".into(), "6".into()],
+        session_keepalive_expected_length: None,
         notes: None,
         model_access: Default::default(),
         outbound_proxy: None,
@@ -2322,4 +2325,40 @@ async fn api_key_admin_exposes_only_configuration_and_preserves_key_when_rotatin
         admin.reset_credits(account.id()).await.unwrap_err().kind(),
         ProviderAdminErrorKind::Unsupported
     );
+}
+
+#[tokio::test]
+async fn account_facts_preserve_state_tickets_but_unavailability_clears_them() {
+    use gateway_core::provider_ports::{ProviderSessionTicket, ProviderSessionTicketPort};
+    let config = valid_config();
+    let tickets = Arc::new(crate::session_manager::MemoryTickets::default());
+    let bundle = provider_openai::initialize(
+        config.config.clone(),
+        provider_ports().with_session_tickets(tickets.clone()),
+    )
+    .await
+    .unwrap();
+    let account = ProviderAccountId::new("acct_retained_ticket").unwrap();
+    let ticket = ProviderSessionTicket {
+        value: format!("gAAAAA{}", "A".repeat(286)),
+        credential_revision: 1,
+        credential_binding: Some([7; 32]),
+        expires_at: Utc::now().timestamp() + 3600,
+    };
+    for model in ["gpt-6-astra", "gpt-5.6-sol"] {
+        tickets.store(&account, model, &ticket).await.unwrap();
+    }
+    bundle
+        .admin_provider()
+        .account_facts_changed(std::slice::from_ref(&account))
+        .await;
+    for model in ["gpt-6-astra", "gpt-5.6-sol"] {
+        let retained = tickets.load(&account, model).await.unwrap().unwrap();
+        assert_eq!(retained.value, ticket.value);
+        assert_eq!(retained.expires_at, ticket.expires_at);
+    }
+    bundle.admin_provider().account_unavailable(&account).await;
+    for model in ["gpt-6-astra", "gpt-5.6-sol"] {
+        assert!(tickets.load(&account, model).await.unwrap().is_none());
+    }
 }
