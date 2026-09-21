@@ -45,7 +45,6 @@ const {
   loading,
   accounts,
   loadAccounts,
-  refreshAccountsSilently,
   searchQuery,
   providerQuery,
   statusQuery,
@@ -53,6 +52,7 @@ const {
   sort,
   accountSummary,
   accountPagination,
+  refreshAccountsSilently,
   replaceAccount,
   handlePageChange,
   handlePageSizeChange,
@@ -176,7 +176,7 @@ const {
   schedulingEnabled,
   enableSessionKeepalive,
   sessionKeepaliveModels,
-  sessionKeepaliveExpectedLength,
+  sessionKeepaliveExpectedLengths,
   concurrencyLimit: editingConcurrencyLimit,
   weight: editingWeight,
   modelAccess: editingModelAccess,
@@ -191,7 +191,7 @@ const {
   reloadAccounts: loadAccounts,
   reloadGroups: loadGroups,
 })
-const { account: stateAccount, open: stateModalOpen, result: stateResult, loading: stateRefreshing, error: stateError, refresh: refreshState, cancel: cancelStateRefresh } = useAccountSessionState()
+const { account: stateAccount, open: stateModalOpen, result: stateResult, loading: stateRefreshing, error: stateError, refresh: refreshState, cancel: cancelStateRefresh } = useAccountSessionState({ reload: refreshAccountsSilently })
 </script>
 
 <template>
@@ -312,6 +312,15 @@ const { account: stateAccount, open: stateModalOpen, result: stateResult, loadin
               <AccountQuotaSummaryCell :account="row" />
             </template>
 
+            <template #sessionState="{ row }">
+              <div v-if="Object.keys(row.sessionKeepaliveStateLengths).length" class="grid min-w-0 gap-1 text-xs">
+                <span v-for="(length, model) in row.sessionKeepaliveStateLengths" :key="model" class="truncate" :title="`${model}: ${length} 字节`">
+                  <span class="font-mono">{{ model }}</span> · {{ length }} 字节
+                </span>
+              </div>
+              <span v-else class="text-cp-text-quaternary">未获取</span>
+            </template>
+
             <template #groups="{ row }">
               <div class="flex w-full justify-center">
                 <AccountGroupMarks :groups="row.groups" />
@@ -420,7 +429,7 @@ const { account: stateAccount, open: stateModalOpen, result: stateResult, loadin
       v-model:enabled="schedulingEnabled"
       v-model:enable-session-keepalive="enableSessionKeepalive"
       v-model:session-keepalive-models="sessionKeepaliveModels"
-      v-model:session-keepalive-expected-length="sessionKeepaliveExpectedLength"
+      v-model:session-keepalive-expected-lengths="sessionKeepaliveExpectedLengths"
       v-model:concurrency-limit="editingConcurrencyLimit"
       v-model:weight="editingWeight"
       v-model:model-access="editingModelAccess"

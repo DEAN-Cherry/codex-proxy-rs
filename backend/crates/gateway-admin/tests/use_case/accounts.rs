@@ -1534,7 +1534,7 @@ async fn accounts_update_should_commit_then_release_disabled_account_and_publish
             UpdateAccount {
                 enable_session_keepalive: None,
                 session_keepalive_models: None,
-                session_keepalive_expected_length: None,
+                session_keepalive_expected_lengths: None,
                 notes: None,
                 model_access: Default::default(),
                 outbound_proxy: None,
@@ -1576,7 +1576,7 @@ async fn accounts_update_should_not_notify_provider_when_store_commit_fails() {
             UpdateAccount {
                 enable_session_keepalive: None,
                 session_keepalive_models: None,
-                session_keepalive_expected_length: None,
+                session_keepalive_expected_lengths: None,
                 notes: None,
                 model_access: Default::default(),
                 outbound_proxy: None,
@@ -2684,7 +2684,7 @@ pub(super) fn account_record(kind: &str) -> AccountRecord {
     AccountRecord {
         enable_session_keepalive: false,
         session_keepalive_models: vec!["5.6 sol".into(), "6".into()],
-        session_keepalive_expected_length: None,
+        session_keepalive_expected_lengths: None,
         notes: None,
         model_access: Default::default(),
         outbound_proxy: None,

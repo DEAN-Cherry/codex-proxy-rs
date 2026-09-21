@@ -123,6 +123,14 @@ pub trait ProviderAdmin: Send + Sync {
         Err(ProviderAdminError::new(ProviderAdminErrorKind::Unsupported))
     }
 
+    /// 返回账号当前有效 State 的模型与字节长度，不返回票据原文。
+    async fn session_state_lengths(
+        &self,
+        _account_id: &ProviderAccountId,
+    ) -> Result<BTreeMap<String, u32>, ProviderAdminError> {
+        Ok(BTreeMap::new())
+    }
+
     fn provider_kind(&self) -> &ProviderKind;
 
     /// 提供该 Provider 的可选客户端身份；通用管理层不解释内部字段。

@@ -1,6 +1,6 @@
 //! Provider 管理能力交换的中立 Command 与 Result。
 
-use std::{fmt, pin::Pin};
+use std::{collections::BTreeMap, fmt, pin::Pin};
 
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -1100,6 +1100,8 @@ pub struct AccountDirectoryItem {
     pub projection: gateway_core::account::AccountStatusProjection,
     pub usage: Option<super::accounts::AccountUsage>,
     pub quota: ProviderQuota,
+    /// 当前有效 State 的模型长度摘要，不包含 State 原文。
+    pub session_keepalive_state_lengths: BTreeMap<String, u32>,
 }
 
 /// 统一账号目录页。

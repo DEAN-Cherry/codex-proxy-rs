@@ -1177,7 +1177,7 @@ async fn terminal_admin_mutations_keep_revision_account_and_audit_atomic() {
             UpdateAccount {
                 enable_session_keepalive: None,
                 session_keepalive_models: None,
-                session_keepalive_expected_length: None,
+                session_keepalive_expected_lengths: None,
                 notes: None,
                 model_access: Default::default(),
                 outbound_proxy: None,
@@ -1261,7 +1261,7 @@ async fn account_proxy_edits_preserve_credentials_and_clear_egress_without_audit
     let command = UpdateAccount {
         enable_session_keepalive: None,
         session_keepalive_models: None,
-        session_keepalive_expected_length: None,
+        session_keepalive_expected_lengths: None,
         notes: None,
         model_access: Default::default(),
         account_id: "acct_proxy".to_owned(),
@@ -1287,7 +1287,7 @@ async fn account_proxy_edits_preserve_credentials_and_clear_egress_without_audit
             UpdateAccount {
                 enable_session_keepalive: None,
                 session_keepalive_models: None,
-                session_keepalive_expected_length: None,
+                session_keepalive_expected_lengths: None,
                 outbound_proxy: Some(gateway_admin::model::proxies::AccountProxySelection::Url(
                     gateway_core::account::OutboundProxy::parse(
                         "socks5h://next:new-secret@127.0.0.1:1080",
@@ -1306,7 +1306,7 @@ async fn account_proxy_edits_preserve_credentials_and_clear_egress_without_audit
             UpdateAccount {
                 enable_session_keepalive: None,
                 session_keepalive_models: None,
-                session_keepalive_expected_length: None,
+                session_keepalive_expected_lengths: None,
                 outbound_proxy: Some(gateway_admin::model::proxies::AccountProxySelection::Direct),
                 ..command
             },
@@ -1342,7 +1342,7 @@ async fn account_notes_round_trip_and_survive_import_and_scheduling_updates() {
     let command = UpdateAccount {
         enable_session_keepalive: None,
         session_keepalive_models: None,
-        session_keepalive_expected_length: None,
+        session_keepalive_expected_lengths: None,
         account_id: "acct_notes".to_owned(),
         notes: Some("  团队备用\n下月续费  ".to_owned()),
         enabled: true,
@@ -1376,7 +1376,7 @@ async fn account_notes_round_trip_and_survive_import_and_scheduling_updates() {
             UpdateAccount {
                 enable_session_keepalive: None,
                 session_keepalive_models: None,
-                session_keepalive_expected_length: None,
+                session_keepalive_expected_lengths: None,
                 notes: None,
                 ..command.clone()
             },
@@ -1454,7 +1454,7 @@ async fn account_notes_round_trip_and_survive_import_and_scheduling_updates() {
             UpdateAccount {
                 enable_session_keepalive: None,
                 session_keepalive_models: None,
-                session_keepalive_expected_length: None,
+                session_keepalive_expected_lengths: None,
                 notes: Some(" \n\t ".to_owned()),
                 ..command
             },
@@ -1500,7 +1500,7 @@ async fn invalid_account_notes_roll_back_scheduling_revision_and_audit() {
             UpdateAccount {
                 enable_session_keepalive: None,
                 session_keepalive_models: None,
-                session_keepalive_expected_length: None,
+                session_keepalive_expected_lengths: None,
                 account_id: "acct_notes".to_owned(),
                 notes: Some("备".repeat(501)),
                 enabled: false,
@@ -2513,7 +2513,7 @@ async fn provider_account_admin_mutations_are_scoped_audited_and_atomic() {
         .batch_update_provider_accounts_admin(BatchUpdateProviderAccountsAdmin {
             enable_session_keepalive: None,
             session_keepalive_models: None,
-            session_keepalive_expected_length: None,
+            session_keepalive_expected_lengths: None,
             notes: None,
             model_access: Default::default(),
             outbound_proxy: None,
@@ -2584,7 +2584,7 @@ async fn credential_rotation_and_settings_share_one_transaction() {
     let settings = UpdateAccount {
         enable_session_keepalive: None,
         session_keepalive_models: None,
-        session_keepalive_expected_length: None,
+        session_keepalive_expected_lengths: None,
         account_id: ACCOUNT_ID.to_owned(),
         notes: Some("统一保存".to_owned()),
         enabled: false,
@@ -2647,7 +2647,7 @@ async fn credential_rotation_and_settings_share_one_transaction() {
             UpdateAccount {
                 enable_session_keepalive: None,
                 session_keepalive_models: None,
-                session_keepalive_expected_length: None,
+                session_keepalive_expected_lengths: None,
                 outbound_proxy: Some(AccountProxySelection::Saved("missing_proxy".to_owned())),
                 ..settings.clone()
             },
@@ -3227,7 +3227,7 @@ async fn proxy_edit_preserves_an_inflight_token_refresh() {
             UpdateAccount {
                 enable_session_keepalive: None,
                 session_keepalive_models: None,
-                session_keepalive_expected_length: None,
+                session_keepalive_expected_lengths: None,
                 notes: None,
                 model_access: Default::default(),
                 account_id: id.as_str().to_owned(),
@@ -3600,19 +3600,19 @@ async fn session_keepalive_defaults_off_and_survives_unrelated_account_updates()
             .await
             .unwrap()
             .unwrap()
-            .session_keepalive_expected_length(),
+            .session_keepalive_expected_lengths(),
         None
     );
     for (flag, expected, length, expected_length) in [
-        (Some(true), true, Some(Some(332)), Some(332)),
-        (None, true, None, Some(332)),
+        (Some(true), true, Some(Some(vec![332])), Some(vec![332])),
+        (None, true, None, Some(vec![332])),
         (Some(false), false, Some(None), None),
     ] {
         store
             .update_account(
                 UpdateAccount {
                     enable_session_keepalive: flag,
-                    session_keepalive_expected_length: length,
+                    session_keepalive_expected_lengths: length,
                     session_keepalive_models: flag.filter(|flag| *flag).map(|_| {
                         vec![
                             "model-a".to_owned(),
@@ -3648,7 +3648,7 @@ async fn session_keepalive_defaults_off_and_survives_unrelated_account_updates()
             .unwrap();
         assert_eq!(summary[0].enable_session_keepalive, expected);
         assert_eq!(
-            summary[0].session_keepalive_expected_length,
+            summary[0].session_keepalive_expected_lengths,
             expected_length
         );
         assert_eq!(
@@ -3657,8 +3657,8 @@ async fn session_keepalive_defaults_off_and_survives_unrelated_account_updates()
                 .await
                 .unwrap()
                 .unwrap()
-                .session_keepalive_expected_length(),
-            expected_length
+                .session_keepalive_expected_lengths(),
+            expected_length.as_deref()
         );
         assert_eq!(
             summary[0].session_keepalive_models,

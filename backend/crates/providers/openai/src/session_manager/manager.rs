@@ -123,6 +123,31 @@ impl SessionManager {
         self.refresh_with_progress(account_id, None).await
     }
 
+    pub async fn state_lengths(
+        &self,
+        account_id: &ProviderAccountId,
+    ) -> Result<std::collections::BTreeMap<String, u32>, ProviderAdminError> {
+        let account = self
+            .repository
+            .store()
+            .get_account(account_id)
+            .await
+            .map_err(|_| admin_error(ProviderAdminErrorKind::Unavailable, "账号读取失败"))?
+            .ok_or_else(|| admin_error(ProviderAdminErrorKind::NotFound, "账号不存在"))?;
+        if !account.enable_session_keepalive() {
+            return Ok(std::collections::BTreeMap::new());
+        }
+        let mut lengths = std::collections::BTreeMap::new();
+        for model in account.session_keepalive_models() {
+            if let Ok(Some(ticket)) = self.load_ticket(&account, model).await
+                && let Ok(length) = u32::try_from(ticket.value.len())
+            {
+                lengths.insert(model.clone(), length);
+            }
+        }
+        Ok(lengths)
+    }
+
     pub async fn refresh_with_progress(
         &self,
         account_id: &ProviderAccountId,
@@ -516,7 +541,7 @@ impl SessionManager {
         // 先断言 Header 原始字节长度，不复制、不 trim、不等待响应正文。
         if let Some(state) = response.headers().get("x-codex-turn-state")
             && !is_valid_state_length_for_account(
-                account.session_keepalive_expected_length(),
+                account.session_keepalive_expected_lengths(),
                 state.as_bytes().len(),
             )
         {
@@ -536,7 +561,7 @@ impl SessionManager {
             .get("x-codex-turn-state")
             .and_then(|value| value.to_str().ok())
             .filter(|value| {
-                valid_state_for_account(account.session_keepalive_expected_length(), value)
+                valid_state_for_account(account.session_keepalive_expected_lengths(), value)
             })
             .ok_or_else(|| format!("上游未返回有效 State（重写 {probe_id}）"))?
             .to_owned();
@@ -564,8 +589,8 @@ impl SessionManager {
             .decode_runtime_credential(&current)
             .map_err(|_| "账号鉴权校验失败")?;
         if !eligible(&current.account)
-            || current.account.session_keepalive_expected_length()
-                != account.session_keepalive_expected_length()
+            || current.account.session_keepalive_expected_lengths()
+                != account.session_keepalive_expected_lengths()
             || !current.account.model_access().allows(model)
             || !current
                 .account
@@ -643,7 +668,7 @@ impl SessionManager {
             return Err("ticket_expired".to_owned());
         }
         if ticket.expires_at > now + TTL_SECONDS
-            || !valid_state_for_account(account.session_keepalive_expected_length(), &ticket.value)
+            || !valid_state_for_account(account.session_keepalive_expected_lengths(), &ticket.value)
         {
             return Err("invalid_ticket".to_owned());
         }
@@ -799,9 +824,11 @@ fn admin_error(kind: ProviderAdminErrorKind, message: &'static str) -> ProviderA
     ProviderAdminError::new(kind).with_public_message(message)
 }
 
-fn is_valid_state_length_for_account(expected: Option<u32>, len: usize) -> bool {
+fn is_valid_state_length_for_account(expected: Option<&[u32]>, len: usize) -> bool {
     match expected {
-        Some(exp) => usize::try_from(exp).ok() == Some(len),
+        Some(lengths) => lengths
+            .iter()
+            .any(|expected| usize::try_from(*expected).ok() == Some(len)),
         None => (200..=600).contains(&len),
     }
 }
@@ -810,7 +837,7 @@ fn refresh_limit_error() -> String {
     format!("连续失败达 {MAX_REFRESH_ATTEMPTS} 轮，已暂停重写，请手动强制刷新")
 }
 
-fn valid_state_for_account(expected: Option<u32>, state: &str) -> bool {
+fn valid_state_for_account(expected: Option<&[u32]>, state: &str) -> bool {
     is_valid_state_length_for_account(expected, state.len())
         && state.is_ascii()
         && state.starts_with("gAAAAA")

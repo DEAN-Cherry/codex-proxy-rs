@@ -23,7 +23,7 @@ export function useAccountEditor(options: {
   const schedulingEnabled = shallowRef(true)
   const enableSessionKeepalive = shallowRef(false)
   const sessionKeepaliveModels = ref<string[]>([])
-  const sessionKeepaliveExpectedLength = shallowRef('')
+  const sessionKeepaliveExpectedLengths = ref<number[]>([])
   const concurrencyLimit = shallowRef('')
   const weight = shallowRef('1')
   const modelAccess = ref<AccountModelAccess | undefined>()
@@ -74,7 +74,7 @@ export function useAccountEditor(options: {
     schedulingEnabled.value = account.enabled
     enableSessionKeepalive.value = account.enableSessionKeepalive
     sessionKeepaliveModels.value = [...(account.sessionKeepaliveModels ?? ['gpt-5.6-sol', 'gpt-6-astra'])]
-    sessionKeepaliveExpectedLength.value = account.sessionKeepaliveExpectedLength ? String(account.sessionKeepaliveExpectedLength) : ''
+    sessionKeepaliveExpectedLengths.value = [...(account.sessionKeepaliveExpectedLengths ?? [])]
     concurrencyLimit.value = concurrencyLimitInput(account.concurrencyLimit)
     weight.value = String(account.weight)
     modelAccess.value = { ...account.modelAccess, models: [...account.modelAccess.models] }
@@ -106,11 +106,13 @@ export function useAccountEditor(options: {
       toast.warning('请选择 1～32 个重写模型')
       return
     }
-    const lengthInput = sessionKeepaliveExpectedLength.value.trim()
-    const expectedLength = lengthInput ? Number(lengthInput) : null
-    if (supportsSessionRewrite && expectedLength !== null
-      && (!/^\d+$/.test(lengthInput) || !Number.isSafeInteger(expectedLength) || expectedLength < 100 || expectedLength > 2000)) {
-      toast.warning('期望 State 长度应为 100～2000 的整数，或留空')
+    const expectedLengths = [...new Set(sessionKeepaliveExpectedLengths.value)]
+    if (supportsSessionRewrite && expectedLengths.some(length => !Number.isSafeInteger(length) || length < 100 || length > 2000)) {
+      toast.warning('期望 State 长度应为 100～2000 的整数')
+      return
+    }
+    if (supportsSessionRewrite && expectedLengths.length > 32) {
+      toast.warning('最多配置 32 个允许的 State 长度')
       return
     }
     const modelError = accountModelAccessError(modelAccess.value)
@@ -136,7 +138,7 @@ export function useAccountEditor(options: {
         enabled: schedulingEnabled.value,
         enableSessionKeepalive: supportsSessionRewrite ? enableSessionKeepalive.value : undefined,
         sessionKeepaliveModels: supportsSessionRewrite ? sessionKeepaliveModels.value : undefined,
-        sessionKeepaliveExpectedLength: supportsSessionRewrite ? expectedLength : undefined,
+        sessionKeepaliveExpectedLengths: supportsSessionRewrite ? (expectedLengths.length ? expectedLengths : null) : undefined,
         concurrencyLimit: scheduling.values.concurrencyLimit,
         weight: scheduling.values.weight,
         modelAccess: modelAccess.value,
@@ -188,7 +190,7 @@ export function useAccountEditor(options: {
     schedulingEnabled,
     enableSessionKeepalive,
     sessionKeepaliveModels,
-    sessionKeepaliveExpectedLength,
+    sessionKeepaliveExpectedLengths,
     concurrencyLimit,
     weight,
     modelAccess,

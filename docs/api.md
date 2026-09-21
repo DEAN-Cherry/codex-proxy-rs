@@ -1020,7 +1020,7 @@ HTTP 返回 `429`，`error.code` 为 `key_daily_budget_exceeded` 或 `key_weekly
 
 账号列表返回 `enableSessionKeepalive`，默认 `false`。`POST /api/admin/accounts/update` 可携带该布尔值；省略或 `null` 保留原值。有效范围为 OpenAI OAuth 账号；开启不要求先判断业务故障原因。账号列表还返回 `sessionKeepaliveModels`，默认 `["gpt-5.6-sol", "gpt-6-astra"]`；账号更新可提交 1～32 个唯一的上游模型 ID，每个 1～128 字节且无首尾空白或控制字符，省略或 null 保留。其他必需更新字段仍按原接口提交。
 
-`sessionKeepaliveExpectedLength` 为账号级 State 原始字节长度，可设为 100～2000 的整数；省略保留原值，显式 `null` 清空精确长度限制。默认 `null` 接受 200～600 字节，设置整数后仅接受精确长度。探针还要求 HTTP 200、ASCII 内容及 `gAAAAA` 前缀；这只是实验性准入规则，不是密码学验证或模型质量判断，套餐与长度之间没有官方保证。缓存读取也执行当前账号的长度规则，修改配置后不符合新规则的旧票据不能用于业务请求。
+`sessionKeepaliveExpectedLengths` 为账号级 State 原始字节长度允许列表，每个值为 100～2000 的整数，最多 32 个且不能重复；省略保留原值，显式 `null` 清空精确长度限制。旧客户端提交单值 `sessionKeepaliveExpectedLength` 时会兼容转换为单元素列表。默认 `null` 接受 200～600 字节，配置列表后只接受列表中的长度。账号列表的 `sessionKeepaliveStateLengths` 只返回当前有效票据的模型与实际字节长度，不返回 State 原文；没有有效票据时为空对象。探针还要求 HTTP 200、ASCII 内容及 `gAAAAA` 前缀；这只是实验性准入规则，不是密码学验证或模型质量判断，套餐与长度之间没有官方保证。缓存读取也执行当前账号的长度规则，修改配置后不符合新规则的旧票据不能用于业务请求。
 
 `POST /api/admin/accounts/session-state/refresh` 使用管理员鉴权，JSON 请求为 `{ "accountId": "acct_..." }`，拒绝未知字段。账号必须启用、保活开启且 OAuth 凭据可用，另须开启全局 `sessionKeepaliveEnabled` 并存在测试通过的动态代理。一次刷新该账号 `sessionKeepaliveModels` 中的所有精确模型，遵守账号模型权限，不接受客户端 Token、代理或 State。
 

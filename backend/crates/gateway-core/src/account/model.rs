@@ -725,7 +725,7 @@ const fn status_projection(status: AccountStatus) -> AccountStatusProjection {
 pub struct ProviderAccount {
     enable_session_keepalive: bool,
     session_keepalive_models: Vec<String>,
-    session_keepalive_expected_length: Option<u32>,
+    session_keepalive_expected_lengths: Option<Vec<u32>>,
     id: ProviderAccountId,
     provider: ProviderKind,
     name: String,
@@ -763,13 +763,13 @@ impl ProviderAccount {
     }
 
     #[must_use]
-    pub const fn session_keepalive_expected_length(&self) -> Option<u32> {
-        self.session_keepalive_expected_length
+    pub fn session_keepalive_expected_lengths(&self) -> Option<&[u32]> {
+        self.session_keepalive_expected_lengths.as_deref()
     }
 
     #[must_use]
-    pub const fn with_session_keepalive_expected_length(mut self, length: Option<u32>) -> Self {
-        self.session_keepalive_expected_length = length;
+    pub fn with_session_keepalive_expected_lengths(mut self, lengths: Option<Vec<u32>>) -> Self {
+        self.session_keepalive_expected_lengths = lengths;
         self
     }
 
@@ -808,7 +808,7 @@ impl ProviderAccount {
             enabled: true,
             enable_session_keepalive: false,
             session_keepalive_models: Vec::new(),
-            session_keepalive_expected_length: None,
+            session_keepalive_expected_lengths: None,
             concurrency_limit: None,
             weight: AccountWeight::DEFAULT,
             model_access: super::AccountModelAccess::all(),
@@ -1421,6 +1421,21 @@ pub fn validate_session_keepalive_expected_length(length: u32) -> Result<(), &'s
     } else {
         Err("State 长度应为 100～2000 字节")
     }
+}
+
+pub fn validate_session_keepalive_expected_lengths(lengths: &[u32]) -> Result<(), &'static str> {
+    if lengths.is_empty()
+        || lengths.len() > 32
+        || lengths.iter().any(|length| !(100..=2000).contains(length))
+        || lengths
+            .iter()
+            .collect::<std::collections::BTreeSet<_>>()
+            .len()
+            != lengths.len()
+    {
+        return Err("State 长度列表应包含 1～32 个不重复的 100～2000 整数");
+    }
+    Ok(())
 }
 
 /// 重写逐模型发请求，限制单账号规模并拒绝重复 ID，防止误配放大调用。

@@ -127,13 +127,17 @@ impl MemoryAccountStore {
     }
 
     pub(crate) fn set_session_expected_length(&self, id: &str, length: Option<u32>) {
+        self.set_session_expected_lengths(id, length.map(|length| vec![length]));
+    }
+
+    pub(crate) fn set_session_expected_lengths(&self, id: &str, lengths: Option<Vec<u32>>) {
         let id = ProviderAccountId::new(id).unwrap();
         let mut accounts = self.accounts.lock().unwrap();
         let stored = accounts.get_mut(&id).unwrap();
         stored.account = stored
             .account
             .clone()
-            .with_session_keepalive_expected_length(length);
+            .with_session_keepalive_expected_lengths(lengths);
     }
 
     pub(crate) fn account(&self, id: &str) -> Option<ProviderAccount> {

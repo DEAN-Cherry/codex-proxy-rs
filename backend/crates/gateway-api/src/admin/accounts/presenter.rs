@@ -64,6 +64,7 @@ pub(super) fn account_view(item: AccountDirectoryItem, now: DateTime<Utc>) -> Ac
         projection,
         usage,
         quota,
+        session_keepalive_state_lengths,
     } = item;
     let status = projection.status.as_str().to_owned();
     let cooldown = projection.cooldown;
@@ -79,7 +80,8 @@ pub(super) fn account_view(item: AccountDirectoryItem, now: DateTime<Utc>) -> Ac
     AccountView {
         enable_session_keepalive: account.enable_session_keepalive,
         session_keepalive_models: account.session_keepalive_models,
-        session_keepalive_expected_length: account.session_keepalive_expected_length,
+        session_keepalive_expected_lengths: account.session_keepalive_expected_lengths,
+        session_keepalive_state_lengths,
         id: account.id.clone(),
         name: account.name,
         notes: account.notes,

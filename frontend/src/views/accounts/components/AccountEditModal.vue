@@ -2,12 +2,14 @@
 import type { AccountRow } from '../constants'
 import type { ApiKeyAccountForm } from '../utils/upstreamApiKey'
 import type { AccountGroup, AccountModelAccess } from '@/api'
+import { shallowRef, watch } from 'vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseFormItem from '@/components/base/BaseForm/FormItem.vue'
 import BaseInput from '@/components/base/BaseInput.vue'
 import BaseModal from '@/components/base/BaseModal/index.vue'
 import BaseSwitch from '@/components/base/BaseSwitch.vue'
+import BaseTag from '@/components/base/BaseTag.vue'
 import BaseTextarea from '@/components/base/BaseTextarea.vue'
 import ProviderIconGroup from '@/components/ProviderIconGroup.vue'
 import AccountApiKeyFields from './AccountApiKeyFields.vue'
@@ -34,7 +36,7 @@ const apiKey = defineModel<ApiKeyAccountForm>('apiKey', { required: true })
 const notes = defineModel<string>('notes', { required: true })
 const enabled = defineModel<boolean>('enabled', { required: true })
 const sessionKeepaliveModels = defineModel<string[]>('sessionKeepaliveModels', { required: true })
-const sessionKeepaliveExpectedLength = defineModel<string>('sessionKeepaliveExpectedLength', { required: true })
+const sessionKeepaliveExpectedLengths = defineModel<number[]>('sessionKeepaliveExpectedLengths', { required: true })
 const enableSessionKeepalive = defineModel<boolean>('enableSessionKeepalive', { required: true })
 const concurrencyLimit = defineModel<string>('concurrencyLimit', { required: true })
 const modelAccess = defineModel<AccountModelAccess | undefined>('modelAccess', { required: true })
@@ -42,6 +44,43 @@ const weight = defineModel<string>('weight', { required: true })
 const proxyMode = defineModel<string>('proxyMode', { required: true })
 const proxyId = defineModel<string>('proxyId', { required: true })
 const selectedGroupIds = defineModel<string[]>('selectedGroupIds', { required: true })
+const newExpectedLength = shallowRef('')
+const lengthError = shallowRef('')
+
+watch(open, () => {
+  newExpectedLength.value = ''
+  lengthError.value = ''
+})
+
+function addExpectedLength() {
+  const input = newExpectedLength.value.trim()
+  if (!input)
+    return true
+  const values = input.split(/[,，\s]+/)
+  if (values.some(value => !/^\d+$/.test(value) || Number(value) < 100 || Number(value) > 2000)) {
+    lengthError.value = '请输入 100～2000 的整数，多个值用逗号分隔'
+    return false
+  }
+  const lengths = [...new Set([...sessionKeepaliveExpectedLengths.value, ...values.map(Number)])]
+  if (lengths.length > 32) {
+    lengthError.value = '最多配置 32 个允许长度'
+    return false
+  }
+  sessionKeepaliveExpectedLengths.value = lengths.sort((a, b) => a - b)
+  newExpectedLength.value = ''
+  lengthError.value = ''
+  return true
+}
+
+function save() {
+  if (enableSessionKeepalive.value && !addExpectedLength())
+    return
+  emit('save')
+}
+
+function removeExpectedLength(value: number) {
+  sessionKeepaliveExpectedLengths.value = sessionKeepaliveExpectedLengths.value.filter(length => length !== value)
+}
 </script>
 
 <template>
@@ -110,14 +149,26 @@ const selectedGroupIds = defineModel<string[]>('selectedGroupIds', { required: t
       <BaseFormItem
         v-if="enableSessionKeepalive && account.provider === 'openai' && account.authenticationKind === 'oauth'"
         label="期望 State 长度（字节）"
-        description="可填 100～2000 的整数，按该账号实际返回值配置"
+        description="留空接受 200～600 字节，配置多个值时仅接受其中任意一个"
+        :error="lengthError"
       >
-        <BaseInput
-          v-model="sessionKeepaliveExpectedLength"
-          placeholder="留空接受 200～600 字节"
-          inputmode="numeric"
-          :disabled="saving"
-        />
+        <div class="grid gap-2">
+          <div v-if="sessionKeepaliveExpectedLengths.length" class="flex flex-wrap gap-2">
+            <BaseTag v-for="length in sessionKeepaliveExpectedLengths" :key="length" type="info" round>
+              {{ length }}
+              <button type="button" class="ml-1 border-0 bg-transparent p-0 text-current" :disabled="saving" :aria-label="`删除允许长度 ${length}`" @click="removeExpectedLength(length)">
+                ×
+              </button>
+            </BaseTag>
+          </div>
+          <div class="flex gap-2">
+            <BaseInput v-model="newExpectedLength" inputmode="numeric" placeholder="例如 292,312，回车添加" :disabled="saving" @keydown.enter.prevent="addExpectedLength" />
+            <BaseButton variant="secondary" :disabled="saving || !newExpectedLength.trim()" @click="addExpectedLength">
+              添加
+            </BaseButton>
+          </div>
+          <span class="text-cp-xs text-cp-text-tertiary">当前实际 State：{{ Object.entries(account.sessionKeepaliveStateLengths).map(([model, length]) => `${model} ${length}`).join(' · ') || '未获取' }}</span>
+        </div>
       </BaseFormItem>
 
       <BaseFormItem label="备注">
@@ -139,7 +190,7 @@ const selectedGroupIds = defineModel<string[]>('selectedGroupIds', { required: t
         variant="primary"
         :loading="saving"
         :disabled="!account || groupsLoading || (account.authenticationKind === 'api_key' && !configurationReady)"
-        @click="emit('save')"
+        @click="save"
       >
         保存更改
       </BaseButton>

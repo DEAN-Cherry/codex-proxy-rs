@@ -121,7 +121,8 @@ export interface AccountModelAccess {
 export interface Account {
   enableSessionKeepalive: boolean
   sessionKeepaliveModels: string[]
-  sessionKeepaliveExpectedLength: number | null
+  sessionKeepaliveExpectedLengths: number[] | null
+  sessionKeepaliveStateLengths: Record<string, number>
   outboundProxyEndpoint: string | null
   id: string
   name: string
@@ -378,7 +379,7 @@ interface AccountResetCreditConsumeParam extends AccountIdParam {
 interface AccountUpdateParam {
   enableSessionKeepalive?: boolean
   sessionKeepaliveModels?: string[]
-  sessionKeepaliveExpectedLength?: number | null
+  sessionKeepaliveExpectedLengths?: number[] | null
   outboundProxyUrl?: string
   outboundProxyId?: string
   accountId: string

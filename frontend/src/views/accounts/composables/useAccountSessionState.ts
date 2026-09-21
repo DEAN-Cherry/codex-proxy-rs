@@ -4,7 +4,7 @@ import { shallowRef, watch } from 'vue'
 import { streamAccountSessionState } from '@/api'
 import { useRequestState } from '@/composables/useRequestState'
 
-export function useAccountSessionState() {
+export function useAccountSessionState(options: { reload?: () => Promise<unknown> } = {}) {
   const account = shallowRef<AccountRow | null>(null)
   const open = shallowRef(false)
   const result = shallowRef<SessionStateRefresh | null>(null)
@@ -29,6 +29,8 @@ export function useAccountSessionState() {
       }, { signal: request.signal })
       if (request.isCurrent(id))
         result.value = data
+      if (request.isCurrent(id) && options.reload)
+        await options.reload()
     }
     catch (error) {
       request.fail(id, error)

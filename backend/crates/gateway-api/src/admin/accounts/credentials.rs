@@ -220,6 +220,11 @@ pub struct UpdateAccountRequest {
         default,
         deserialize_with = "super::wire::deserialize_optional_nullable"
     )]
+    pub session_keepalive_expected_lengths: Option<Option<Vec<u32>>>,
+    #[serde(
+        default,
+        deserialize_with = "super::wire::deserialize_optional_nullable"
+    )]
     pub session_keepalive_expected_length: Option<Option<u32>>,
     pub outbound_proxy_id: Option<String>,
     pub outbound_proxy_url: Option<super::wire::AccountProxyUpdate>,
@@ -240,15 +245,22 @@ impl UpdateAccountRequest {
         parse_concurrency_limit(self.concurrency_limit)?;
         parse_account_weight(self.weight)?;
         validate_wire_group_ids(&self.group_ids)?;
-        if let Some(Some(length)) = self.session_keepalive_expected_length {
-            gateway_core::account::validate_session_keepalive_expected_length(length)
-                .map_err(|_| WireValidationError::new("sessionKeepaliveExpectedLength"))?;
+        if let Some(Some(lengths)) = &self.session_keepalive_expected_lengths {
+            gateway_core::account::validate_session_keepalive_expected_lengths(lengths)
+                .map_err(|_| WireValidationError::new("sessionKeepaliveExpectedLengths"))?;
+        } else if let Some(Some(length)) = self.session_keepalive_expected_length {
+            gateway_core::account::validate_session_keepalive_expected_lengths(&[length])
+                .map_err(|_| WireValidationError::new("sessionKeepaliveExpectedLengths"))?;
         }
         Ok(())
     }
 
     pub(super) fn into_command(self) -> Result<UpdateAccount, WireValidationError> {
         self.validate()?;
+        let expected_lengths = self.session_keepalive_expected_lengths.clone().or_else(|| {
+            self.session_keepalive_expected_length
+                .map(|length| length.map(|length| vec![length]))
+        });
         if let Some(models) = &self.session_keepalive_models {
             gateway_core::account::validate_session_keepalive_models(models)
                 .map_err(|_| WireValidationError::new("sessionKeepaliveModels"))?;
@@ -256,7 +268,7 @@ impl UpdateAccountRequest {
         Ok(UpdateAccount {
             enable_session_keepalive: self.enable_session_keepalive,
             session_keepalive_models: self.session_keepalive_models,
-            session_keepalive_expected_length: self.session_keepalive_expected_length,
+            session_keepalive_expected_lengths: expected_lengths,
             outbound_proxy: super::wire::proxy_selection(
                 self.outbound_proxy_id,
                 self.outbound_proxy_url,

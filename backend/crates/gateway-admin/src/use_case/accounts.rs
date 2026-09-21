@@ -359,6 +359,7 @@ impl DefaultAccountsService {
             usage,
             account: stored.account,
             quota,
+            session_keepalive_state_lengths: BTreeMap::new(),
         })
     }
 }
@@ -407,6 +408,28 @@ impl AccountsService for DefaultAccountsService {
             .into_iter()
             .map(|usage| (usage.account_id.clone(), usage))
             .collect::<BTreeMap<_, _>>();
+        let state_lengths = futures::future::join_all(page.items.iter().map(|item| async {
+            let account_id = ProviderAccountId::new(item.account.id.clone())
+                .map_err(|_| AdminError::invalid("Provider 账号 ID 不合法"))?;
+            let provider = self.providers.require(&item.account.provider_kind).ok();
+            match provider {
+                Some(provider) => match provider.session_state_lengths(&account_id).await {
+                    Ok(lengths) => Ok(lengths),
+                    Err(error) => {
+                        tracing::debug!(
+                            account_id = %item.account.id,
+                            error = ?error,
+                            "account directory State length projection unavailable"
+                        );
+                        Ok(BTreeMap::new())
+                    }
+                },
+                None => Ok(BTreeMap::new()),
+            }
+        }))
+        .await
+        .into_iter()
+        .collect::<Result<Vec<_>, AdminError>>()?;
         let mut quotas = futures::future::join_all(page.items.iter().map(|item| async {
             let account = &item.account;
             let account_id = ProviderAccountId::new(account.id.clone())
@@ -453,7 +476,8 @@ impl AccountsService for DefaultAccountsService {
             .items
             .into_iter()
             .zip(quotas)
-            .map(|(mut item, quota)| {
+            .zip(state_lengths)
+            .map(|((mut item, quota), state_lengths)| {
                 let usage = api_key_usage.remove(&item.account.id).or_else(|| {
                     quota
                         .usage_window()
@@ -469,6 +493,7 @@ impl AccountsService for DefaultAccountsService {
                     account: item.account,
                     projection: item.projection,
                     quota,
+                    session_keepalive_state_lengths: state_lengths,
                 }
             })
             .collect();

@@ -1235,6 +1235,34 @@ async fn configured_lengths_are_account_scoped_and_revalidate_existing_tickets()
 }
 
 #[tokio::test]
+async fn multiple_configured_lengths_accept_only_list_members() {
+    let proxy = MockServer::start().await;
+    let (store, _, manager) = fixture(Some(&proxy.uri())).await;
+    store.set_session_models("acct_a", vec!["gpt-6-astra".to_owned()]);
+    store.set_session_expected_lengths("acct_a", Some(vec![292, 312]));
+    let id = ProviderAccountId::new("acct_a").unwrap();
+    let valid = format!("gAAAAA{}", "A".repeat(312 - 6));
+    mock_model(&proxy, "acct_a", "gpt-6-astra", response_with_state(&valid)).await;
+    assert!(
+        manager.refresh(&id).await.unwrap().models[0]
+            .error
+            .is_none()
+    );
+    assert!(
+        manager
+            .available(&store.account("acct_a").unwrap(), "gpt-6-astra")
+            .await
+    );
+
+    store.set_session_expected_lengths("acct_a", Some(vec![292]));
+    assert!(
+        !manager
+            .available(&store.account("acct_a").unwrap(), "gpt-6-astra")
+            .await
+    );
+}
+
+#[tokio::test]
 async fn retry_limit_stops_manual_and_background_probes_until_manual_recovery() {
     let proxy = MockServer::start().await;
     let (store, _, manager) = fixture(Some(&proxy.uri())).await;

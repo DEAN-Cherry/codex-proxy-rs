@@ -197,6 +197,13 @@ impl ProviderAdmin for OpenAiAdminProvider {
             .await
     }
 
+    async fn session_state_lengths(
+        &self,
+        account_id: &ProviderAccountId,
+    ) -> Result<std::collections::BTreeMap<String, u32>, ProviderAdminError> {
+        self.sessions.state_lengths(account_id).await
+    }
+
     fn provider_kind(&self) -> &ProviderKind {
         &self.provider_kind
     }

@@ -272,7 +272,8 @@ pub struct AccountSummaryView {
 pub struct AccountView {
     pub enable_session_keepalive: bool,
     pub session_keepalive_models: Vec<String>,
-    pub session_keepalive_expected_length: Option<u32>,
+    pub session_keepalive_expected_lengths: Option<Vec<u32>>,
+    pub session_keepalive_state_lengths: std::collections::BTreeMap<String, u32>,
     pub outbound_proxy_endpoint: Option<String>,
     pub id: String,
     pub name: String,
