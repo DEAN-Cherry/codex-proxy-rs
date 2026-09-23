@@ -9,8 +9,8 @@ use std::time::{Duration, SystemTime};
 use futures::future::BoxFuture;
 
 use crate::account::{
-    AccountFeedbackStats, AccountRuntimeSignals, CredentialRevision, CredentialState,
-    OpaqueProviderData, ProviderAccountId, ProviderAccountStore,
+    AccountConcurrency, AccountFeedbackStats, AccountRuntimeSignals, CredentialRevision,
+    CredentialState, OpaqueProviderData, ProviderAccountId, ProviderAccountStore,
 };
 use crate::identity::ProviderKind;
 use crate::policy::ClientApiKeyId;
@@ -86,18 +86,18 @@ pub struct ProviderSchedulingLeaseRequest {
     provider_kind: ProviderKind,
     account_id: ProviderAccountId,
     credential_revision: CredentialRevision,
-    max_concurrent: NonZeroU32,
+    max_concurrent: AccountConcurrency,
     request_interval: Duration,
     deadline: SystemTime,
 }
 
 impl ProviderSchedulingLeaseRequest {
     #[must_use]
-    pub const fn new(
+    pub fn new(
         provider_kind: ProviderKind,
         account_id: ProviderAccountId,
         credential_revision: CredentialRevision,
-        max_concurrent: NonZeroU32,
+        max_concurrent: impl Into<AccountConcurrency>,
         request_interval: Duration,
         deadline: SystemTime,
     ) -> Self {
@@ -105,7 +105,7 @@ impl ProviderSchedulingLeaseRequest {
             provider_kind,
             account_id,
             credential_revision,
-            max_concurrent,
+            max_concurrent: max_concurrent.into(),
             request_interval,
             deadline,
         }
@@ -127,7 +127,7 @@ impl ProviderSchedulingLeaseRequest {
     }
 
     #[must_use]
-    pub const fn max_concurrent(&self) -> NonZeroU32 {
+    pub const fn max_concurrent(&self) -> AccountConcurrency {
         self.max_concurrent
     }
 

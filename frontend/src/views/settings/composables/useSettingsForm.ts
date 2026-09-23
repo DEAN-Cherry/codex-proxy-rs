@@ -205,6 +205,10 @@ export function useSettingsForm() {
       toast.warning('State 重写并发数应为 1～10 的整数，重试间隔应为 1～300 秒的整数')
       return
     }
+    if (!Number.isInteger(maxConcurrentPerAccount) || maxConcurrentPerAccount < 0 || maxConcurrentPerAccount > 4294967295) {
+      toast.warning('默认账号并发上限应为 0～4294967295 的整数，0 表示不限制')
+      return
+    }
     if (responsesMaxDecompressedBodyMiB === null || !Number.isInteger(responsesMaxDecompressedBodyMiB) || responsesMaxDecompressedBodyMiB < 1
       || !Number.isSafeInteger(responsesMaxDecompressedBodyMiB * MIB)) {
       toast.warning('Responses 解压上限应为有效的正整数（MiB）')
