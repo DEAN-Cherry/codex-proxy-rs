@@ -34,6 +34,10 @@ sha256sum --check --strict .frozen-sha256
 CI 还会检查是否遗漏新 SQL 文件，并在 PR 中检查清单只增不改。
 遇到 checksum 不一致，先核对运行版本和文件来源；不要修改数据库中的 checksum 来绕过校验。
 
+## State 长度区间升级
+
+迁移 `0022_session_state_length_ranges.sql` 将账号 State 长度规则从 `INTEGER[]` 转为 `JSONB`，保留已有数字数组及 `NULL`，新增闭区间对象支持。应用后旧二进制无法按整数数组读取该列；需要回退时，应停止应用并恢复迁移前备份，不直接启动旧版本。
+
 ## 本地测试库
 
 `gateway-store` 的 PG/Redis 集成测试需要以下环境变量，未设置时在本地

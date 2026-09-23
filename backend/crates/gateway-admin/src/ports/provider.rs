@@ -133,7 +133,7 @@ pub trait ProviderAdmin: Send + Sync {
 
     fn provider_kind(&self) -> &ProviderKind;
 
-    /// 最近刷新响应的长度与校验事实，包括未通过准入的结果。
+    /// 正常请求与刷新响应的最近 State 摘要，不要求开启重写。
     async fn session_state_observations(
         &self,
         _account_id: &ProviderAccountId,

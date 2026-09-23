@@ -118,17 +118,20 @@ export interface AccountModelAccess {
   models: string[]
 }
 
+export type SessionStateLength = number | { min: number, max: number }
+
 export interface SessionStateObservation {
   stateLength: number | null
   observedAt: string
-  httpStatus: number
-  validation: 'accepted' | 'invalid_length' | 'invalid_format' | 'missing' | 'upstream_error'
+  httpStatus: number | null
+  source: 'business' | 'refresh'
+  validation: 'observed' | 'accepted' | 'invalid_length' | 'invalid_format' | 'missing' | 'upstream_error'
 }
 
 export interface Account {
   enableSessionKeepalive: boolean
   sessionKeepaliveModels: string[]
-  sessionKeepaliveExpectedLengths: number[] | null
+  sessionKeepaliveExpectedLengths: SessionStateLength[] | null
   sessionKeepaliveStateLengths: Record<string, number>
   sessionKeepaliveObservations: Record<string, SessionStateObservation>
   outboundProxyEndpoint: string | null
@@ -387,7 +390,7 @@ interface AccountResetCreditConsumeParam extends AccountIdParam {
 interface AccountUpdateParam {
   enableSessionKeepalive?: boolean
   sessionKeepaliveModels?: string[]
-  sessionKeepaliveExpectedLengths?: number[] | null
+  sessionKeepaliveExpectedLengths?: SessionStateLength[] | null
   outboundProxyUrl?: string
   outboundProxyId?: string
   accountId: string

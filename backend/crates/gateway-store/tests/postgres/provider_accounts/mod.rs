@@ -3612,8 +3612,27 @@ async fn session_keepalive_defaults_off_and_survives_unrelated_account_updates()
         None
     );
     for (flag, expected, length, expected_length) in [
-        (Some(true), true, Some(Some(vec![332])), Some(vec![332])),
-        (None, true, None, Some(vec![332])),
+        (
+            Some(true),
+            true,
+            Some(Some(vec![332.into()])),
+            Some(vec![332.into()]),
+        ),
+        (None, true, None, Some(vec![332.into()])),
+        (
+            None,
+            true,
+            Some(Some(vec![
+                200.into(),
+                300.into(),
+                gateway_core::account::SessionStateLength::Range { min: 400, max: 500 },
+            ])),
+            Some(vec![
+                200.into(),
+                300.into(),
+                gateway_core::account::SessionStateLength::Range { min: 400, max: 500 },
+            ]),
+        ),
         (Some(false), false, Some(None), None),
     ] {
         store

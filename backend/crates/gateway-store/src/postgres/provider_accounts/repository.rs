@@ -1154,7 +1154,7 @@ async fn update_session_keepalive_in_transaction(
     account_ids: &[String],
     enabled: Option<bool>,
     models: Option<&[String]>,
-    expected_length: Option<Option<Vec<u32>>>,
+    expected_length: Option<Option<Vec<gateway_core::account::SessionStateLength>>>,
 ) -> StoreResult<()> {
     if enabled.is_some() || models.is_some() || expected_length.is_some() {
         if let Some(models) = models {
@@ -1172,16 +1172,7 @@ async fn update_session_keepalive_in_transaction(
                         entity: "session keepalive expected length",
                         message: "invalid length".to_owned(),
                     })?;
-                let lengths = lengths
-                    .into_iter()
-                    .map(|length| {
-                        i32::try_from(length).map_err(|_| StoreError::InvalidData {
-                            entity: "session keepalive expected lengths",
-                            message: "invalid lengths".to_owned(),
-                        })
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
-                (true, Some(lengths))
+                (true, Some(sqlx::types::Json(lengths)))
             }
             Some(None) => (true, None),
             None => (false, None),

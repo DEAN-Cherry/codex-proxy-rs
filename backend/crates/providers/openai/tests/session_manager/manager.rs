@@ -928,6 +928,7 @@ async fn rejected_refresh_observations_are_visible_without_replacing_valid_ticke
         let proxy = MockServer::start().await;
         let (store, _, manager) = fixture(Some(&proxy.uri())).await;
         let id = ProviderAccountId::new("acct_a").unwrap();
+        store.set_session_expected_length("acct_a", Some(292));
         store.set_session_models("acct_a", vec!["gpt-6-astra".to_owned()]);
         mock_model(&proxy, "acct_a", "gpt-6-astra", success("cached")).await;
         manager.refresh(&id).await.unwrap();
@@ -956,7 +957,7 @@ async fn rejected_refresh_observations_are_visible_without_replacing_valid_ticke
         let observation = event.observation.unwrap();
         assert_eq!(observation.state_length, length);
         assert_eq!(observation.validation, validation);
-        assert_eq!(observation.http_status, status);
+        assert_eq!(observation.http_status, Some(status));
         assert!(event.expire_at.is_none());
         assert!(!pending.is_finished());
         pending.abort();
@@ -1073,11 +1074,13 @@ async fn http_200_valid_length_and_prefix_are_required_without_consuming_body() 
         (200, state("header-only"), true),
         (200, format!("gAAAAA{}", "A".repeat(194)), true),
         (200, format!("gAAAAA{}", "A".repeat(594)), true),
-        (200, format!("gAAAAA{}", "A".repeat(193)), false),
-        (200, format!("gAAAAA{}", "A".repeat(595)), false),
+        (200, format!("gAAAAA{}", "A".repeat(193)), true),
+        (200, format!("gAAAAA{}", "A".repeat(595)), true),
         (201, state("created"), false),
         (200, "A".repeat(292), false),
-        (200, format!("gAAAAA{}", "A".repeat(800)), false),
+        (200, format!("gAAAAA{}", "A".repeat(800)), true),
+        (200, "gAAAAA".to_owned(), true),
+        (200, format!("gAAAAA{}", "A".repeat(3000)), true),
     ] {
         let proxy = MockServer::start().await;
         let (store, _, manager) = fixture(Some(&proxy.uri())).await;
@@ -1393,6 +1396,93 @@ async fn multiple_configured_lengths_accept_only_list_members() {
         !manager
             .available(&store.account("acct_a").unwrap(), "gpt-6-astra")
             .await
+    );
+}
+
+#[tokio::test]
+async fn mixed_length_rules_accept_endpoints_and_reject_gaps_without_losing_cached_state() {
+    use gateway_core::account::SessionStateLength;
+    let proxy = MockServer::start().await;
+    let (store, _, manager) = fixture(Some(&proxy.uri())).await;
+    store.set_session_models("acct_a", vec!["gpt-6-astra".to_owned()]);
+    store.set_session_length_rules(
+        "acct_a",
+        Some(vec![
+            200.into(),
+            300.into(),
+            SessionStateLength::Range { min: 400, max: 500 },
+        ]),
+    );
+    let id = ProviderAccountId::new("acct_a").unwrap();
+    for length in [200, 300, 400, 450, 500] {
+        proxy.reset().await;
+        let value = format!("gAAAAA{}", "A".repeat(length - 6));
+        mock_model(&proxy, "acct_a", "gpt-6-astra", response_with_state(&value)).await;
+        assert!(
+            manager.refresh(&id).await.unwrap().models[0]
+                .error
+                .is_none()
+        );
+        assert_eq!(
+            manager.state_lengths(&id).await.unwrap()["gpt-6-astra"],
+            length as u32
+        );
+    }
+    proxy.reset().await;
+    mock_model(
+        &proxy,
+        "acct_a",
+        "gpt-6-astra",
+        response_with_state(&format!("gAAAAA{}", "A".repeat(501 - 6))),
+    )
+    .await;
+    let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+    let pending = {
+        let manager = manager.clone();
+        let id = id.clone();
+        tokio::spawn(async move {
+            manager
+                .refresh_with_progress(
+                    &id,
+                    Some(Arc::new(move |item| {
+                        let _ = sender.send(item);
+                    })),
+                )
+                .await
+        })
+    };
+    let observed = tokio::time::timeout(Duration::from_secs(2), receiver.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        observed.observation.unwrap().validation,
+        gateway_admin::model::accounts::SessionStateValidation::InvalidLength
+    );
+    pending.abort();
+    assert!(pending.await.unwrap_err().is_cancelled());
+    assert_eq!(
+        manager.state_lengths(&id).await.unwrap()["gpt-6-astra"],
+        500
+    );
+
+    store.set_session_length_rules("acct_a", None);
+    proxy.reset().await;
+    mock_model(
+        &proxy,
+        "acct_a",
+        "gpt-6-astra",
+        response_with_state(&format!("gAAAAA{}", "A".repeat(780 - 6))),
+    )
+    .await;
+    assert!(
+        manager.refresh(&id).await.unwrap().models[0]
+            .error
+            .is_none()
+    );
+    assert_eq!(
+        manager.state_lengths(&id).await.unwrap()["gpt-6-astra"],
+        780
     );
 }
 

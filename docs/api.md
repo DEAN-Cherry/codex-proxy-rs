@@ -1026,11 +1026,13 @@ HTTP 返回 `429`，`error.code` 为 `key_daily_budget_exceeded` 或 `key_weekly
 
 账号列表返回 `enableSessionKeepalive`，默认 `false`。`POST /api/admin/accounts/update` 可携带该布尔值；省略或 `null` 保留原值。有效范围为 OpenAI OAuth 账号；开启不要求先判断业务故障原因。账号列表还返回 `sessionKeepaliveModels`，默认 `["gpt-5.6-sol", "gpt-6-astra"]`；账号更新可提交 1～32 个唯一的上游模型 ID，每个 1～128 字节且无首尾空白或控制字符，省略或 null 保留。其他必需更新字段仍按原接口提交。
 
-`sessionKeepaliveExpectedLengths` 为账号级 State 原始字节长度允许列表，每个值为 100～2000 的整数，最多 32 个且不能重复；省略保留原值，显式 `null` 清空精确长度限制。旧客户端提交单值 `sessionKeepaliveExpectedLength` 时会兼容转换为单元素列表。默认 `null` 接受 200～600 字节，配置列表后只接受列表中的长度。账号列表的 `sessionKeepaliveStateLengths` 只返回当前有效票据的模型与实际字节长度，不返回 State 原文；没有有效票据时为空对象。探针还要求 HTTP 200、ASCII 内容及 `gAAAAA` 前缀；这只是实验性准入规则，不是密码学验证或模型质量判断，套餐与长度之间没有官方保证。缓存读取也执行当前账号的长度规则，修改配置后不符合新规则的旧票据不能用于业务请求。
+`sessionKeepaliveExpectedLengths` 为账号级 State 原始字节长度规则列表，最多 32 项。每项为正整数或闭区间对象 `{ "min": 400, "max": 500 }`，端点取值 1～4294967295 且 `min <= max`，不接受完全相同的范围重复出现；区间不展开为逐个整数。省略保留原值，显式 `null` 清空长度限制，接受任意长度；空列表 `[]` 不是清空配置的写法。旧数字数组和单值更新字段 `sessionKeepaliveExpectedLength` 仍兼容。管理端可输入 `200,300,400-500`，对应 `[200,300,{"min":400,"max":500}]`。账号列表的 `sessionKeepaliveStateLengths` 只返回当前有效票据的模型与实际字节长度，不返回 State 原文；没有有效票据时为空对象。留空只取消长度限制，刷新探针仍要求 HTTP 200、ASCII 内容及 `gAAAAA` 前缀；这些是实验性准入规则，不是密码学验证或模型质量判断。缓存读取也执行当前账号的长度规则，修改配置后不符合新规则的旧票据不能用于业务请求。
 
 `POST /api/admin/accounts/session-state/refresh` 使用管理员鉴权，JSON 请求为 `{ "accountId": "acct_..." }`，拒绝未知字段。账号必须启用、保活开启且 OAuth 凭据可用，另须开启全局 `sessionKeepaliveEnabled` 并存在测试通过的动态代理。一次刷新该账号 `sessionKeepaliveModels` 中的所有精确模型，遵守账号模型权限，不接受客户端 Token、代理或 State。
 
-账号视图另返回 `sessionKeepaliveObservations`，按模型记录最近一次后台或手动刷新收到的响应，包括校验失败的结果。每项含 `stateLength`（原始字节数，未返回头时为 `null`）、`observedAt`（RFC3339 时间）、`httpStatus` 和 `validation`（`accepted`、`invalid_length`、`invalid_format`、`missing`、`upstream_error`）。它与有效缓存 `sessionKeepaliveStateLengths` 独立：最近收到 780 字节但长度不符时，仍可同时展示先前有效的 292 字节缓存。`accepted` 只表示 HTTP/Header 准入通过，不代表缓存写入或完整推理成功。观测仅保留在当前进程，每个账号、模型最多一项，相关账号状态失效时清理，重启后重新采集；网络未收到响应时保留上次观测，不伪造 State 长度。
+账号视图另返回 `sessionKeepaliveObservations`，按实际发送的上游模型显示最近 State 观测。**无需开启全局或账号 State 重写**：正常 Responses 请求收到的 HTTP 响应头或流式 metadata 中的 State 都会记录，未返回 State 时不生成新的业务观测，也不会为展示而额外发起探针。后台/手动刷新仍记录包括校验失败在内的响应，同模型按时间取最近结果。
+
+每项含 `stateLength`（原始字节数，刷新未返回头时为 `null`）、`observedAt`（RFC3339 时间）、`httpStatus`（可空，逐帧 metadata 没有独立 HTTP 状态）、`source`（`business` / `refresh`）和 `validation`。业务来源为 `observed`，只作观测；刷新来源为 `accepted`、`invalid_length`、`invalid_format`、`missing` 或 `upstream_error`。它与有效缓存 `sessionKeepaliveStateLengths` 独立，不把业务 State 自动写成重写票据；`accepted` 只表示刷新响应的 HTTP/Header 准入通过，不代表缓存写入或完整推理成功。观测仅保留在当前进程，刷新项限当前配置模型，业务项每账号保留最近 64 个模型，账号失效时清理，重启后重新采集。
 
 返回标准管理响应信封，`data` 示例：
 
@@ -1038,7 +1040,7 @@ HTTP 返回 `429`，`error.code` 为 `key_daily_budget_exceeded` 或 `key_weekly
 {
   "accountId": "acct_example",
   "models": [
-    { "model": "gpt-5.6-sol", "refreshedAt": "2026-09-18T02:00:00Z", "expireAt": 1789700400, "error": null, "observation": { "stateLength": 292, "observedAt": "2026-09-18T02:00:00Z", "httpStatus": 200, "validation": "accepted" } },
+    { "model": "gpt-5.6-sol", "refreshedAt": "2026-09-18T02:00:00Z", "expireAt": 1789700400, "error": null, "observation": { "stateLength": 292, "observedAt": "2026-09-18T02:00:00Z", "httpStatus": 200, "source": "refresh", "validation": "accepted" } },
     { "model": "gpt-6-astra", "refreshedAt": null, "expireAt": null, "error": "上游拒绝重写请求", "observation": null }
   ]
 }

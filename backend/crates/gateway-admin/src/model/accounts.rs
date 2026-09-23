@@ -95,7 +95,7 @@ pub enum AccountGroupFilter {
 pub struct AccountRecord {
     pub enable_session_keepalive: bool,
     pub session_keepalive_models: Vec<String>,
-    pub session_keepalive_expected_lengths: Option<Vec<u32>>,
+    pub session_keepalive_expected_lengths: Option<Vec<gateway_core::account::SessionStateLength>>,
     pub id: String,
     pub provider_kind: ProviderKind,
     pub groups: Vec<AccountGroupRef>,
@@ -234,7 +234,8 @@ pub struct AccountSummary {
 pub struct UpdateAccount {
     pub enable_session_keepalive: Option<bool>,
     pub session_keepalive_models: Option<Vec<String>>,
-    pub session_keepalive_expected_lengths: Option<Option<Vec<u32>>>,
+    pub session_keepalive_expected_lengths:
+        Option<Option<Vec<gateway_core::account::SessionStateLength>>>,
     pub account_id: String,
     /// 缺省保留备注；空字符串清空备注。
     pub notes: Option<String>,
@@ -314,22 +315,30 @@ pub type AccountConnectionTestEventStream =
 /// 每次收到上游响应、模型完成缓存写入或终止后通知调用方，不传递凭证原文。
 pub type SessionRefreshObserver = std::sync::Arc<dyn Fn(SessionModelRefresh) + Send + Sync>;
 
-/// 最近一次刷新响应的安全摘要，与仍可使用的缓存票据分开。
+/// 上游 State 观测的安全摘要，与仍可使用的缓存票据分开。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionStateObservation {
     pub state_length: Option<u32>,
     pub observed_at: DateTime<Utc>,
-    pub http_status: u16,
+    pub http_status: Option<u16>,
+    pub source: SessionStateObservationSource,
     pub validation: SessionStateValidation,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionStateValidation {
+    Observed,
     Accepted,
     InvalidLength,
     InvalidFormat,
     Missing,
     UpstreamError,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionStateObservationSource {
+    Business,
+    Refresh,
 }
 
 /// 手动重写的逐模型结果，不承载 State 或鉴权原文。

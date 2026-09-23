@@ -1,5 +1,5 @@
 import type { Ref } from 'vue'
-import type { AccountModelAccess, ApiKeyConfiguration, getAccounts } from '@/api'
+import type { AccountModelAccess, ApiKeyConfiguration, getAccounts, SessionStateLength } from '@/api'
 
 import { computed, ref, shallowRef, watch } from 'vue'
 import { getAccountDetail, updateAccount, updateAccountApiKey } from '@/api'
@@ -8,6 +8,7 @@ import { useAsyncAction } from '@/composables/useAsyncAction'
 import { useRequestState } from '@/composables/useRequestState'
 import { accountModelAccessError } from '../utils/modelAccess'
 import { concurrencyLimitInput, parseAccountSchedulingForm } from '../utils/schedulingForm'
+import { normalizeStateLengths } from '../utils/sessionStateLengths'
 import { apiKeyAccountError, emptyApiKeyAccountForm } from '../utils/upstreamApiKey'
 
 type AccountRow = Awaited<ReturnType<typeof getAccounts>>['items'][number]
@@ -23,7 +24,7 @@ export function useAccountEditor(options: {
   const schedulingEnabled = shallowRef(true)
   const enableSessionKeepalive = shallowRef(false)
   const sessionKeepaliveModels = ref<string[]>([])
-  const sessionKeepaliveExpectedLengths = ref<number[]>([])
+  const sessionKeepaliveExpectedLengths = ref<SessionStateLength[]>([])
   const concurrencyLimit = shallowRef('')
   const weight = shallowRef('1')
   const modelAccess = ref<AccountModelAccess | undefined>()
@@ -106,13 +107,12 @@ export function useAccountEditor(options: {
       toast.warning('请选择 1～32 个重写模型')
       return
     }
-    const expectedLengths = [...new Set(sessionKeepaliveExpectedLengths.value)]
-    if (supportsSessionRewrite && expectedLengths.some(length => !Number.isSafeInteger(length) || length < 100 || length > 2000)) {
-      toast.warning('期望 State 长度应为 100～2000 的整数')
-      return
+    let expectedLengths: SessionStateLength[] = []
+    try {
+      expectedLengths = normalizeStateLengths(sessionKeepaliveExpectedLengths.value)
     }
-    if (supportsSessionRewrite && expectedLengths.length > 32) {
-      toast.warning('最多配置 32 个允许的 State 长度')
+    catch (error) {
+      toast.warning(error instanceof Error ? error.message : 'State 长度格式无效')
       return
     }
     const modelError = accountModelAccessError(modelAccess.value)

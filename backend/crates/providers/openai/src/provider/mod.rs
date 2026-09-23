@@ -647,7 +647,16 @@ impl Provider for CodexProvider {
             AttemptTransport::Retry(retry_index) => retry_index.get(),
             AttemptTransport::Default | AttemptTransport::Fallback => 0,
         };
+        let state_observer = match &self.sessions {
+            Some(sessions) => Some(
+                sessions
+                    .observation_recorder(lease.account_id(), upstream_model.as_str())
+                    .await,
+            ),
+            None => None,
+        };
         let events = cold_response_stream(ColdResponse {
+            state_observer,
             client: self
                 .client_for_request(&context)?
                 .for_account(lease.account())

@@ -141,6 +141,17 @@ impl MemoryAccountStore {
     }
 
     pub(crate) fn set_session_expected_lengths(&self, id: &str, lengths: Option<Vec<u32>>) {
+        self.set_session_length_rules(
+            id,
+            lengths.map(|values| values.into_iter().map(Into::into).collect()),
+        );
+    }
+
+    pub(crate) fn set_session_length_rules(
+        &self,
+        id: &str,
+        lengths: Option<Vec<gateway_core::account::SessionStateLength>>,
+    ) {
         let id = ProviderAccountId::new(id).unwrap();
         let mut accounts = self.accounts.lock().unwrap();
         let stored = accounts.get_mut(&id).unwrap();

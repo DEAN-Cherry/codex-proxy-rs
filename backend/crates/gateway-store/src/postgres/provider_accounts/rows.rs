@@ -122,7 +122,7 @@ pub(crate) fn parse_error_reason(value: Option<String>) -> StoreResult<Option<Ac
 pub struct ProviderAccountSummary {
     pub enable_session_keepalive: bool,
     pub session_keepalive_models: Vec<String>,
-    pub session_keepalive_expected_lengths: Option<Vec<u32>>,
+    pub session_keepalive_expected_lengths: Option<Vec<gateway_core::account::SessionStateLength>>,
     pub request_location: Option<gateway_core::account::RequestLocation>,
     pub outbound_proxy: Option<gateway_core::account::OutboundProxy>,
     pub id: String,
@@ -325,7 +325,8 @@ impl fmt::Debug for RotateProviderAccount {
 pub struct BatchUpdateProviderAccountsAdmin {
     pub enable_session_keepalive: Option<bool>,
     pub session_keepalive_models: Option<Vec<String>>,
-    pub session_keepalive_expected_lengths: Option<Option<Vec<u32>>>,
+    pub session_keepalive_expected_lengths:
+        Option<Option<Vec<gateway_core::account::SessionStateLength>>>,
     pub outbound_proxy: Option<gateway_admin::model::proxies::AccountProxySelection>,
     pub account_ids: Vec<String>,
     pub notes: Option<String>,
@@ -561,18 +562,14 @@ pub(crate) fn account_summary_from_row(
     Ok(ProviderAccountSummary {
         enable_session_keepalive: get(&row, "enable_session_keepalive")?,
         session_keepalive_models: get(&row, "session_keepalive_models")?,
-        session_keepalive_expected_lengths: get::<Option<Vec<i32>>>(
+        session_keepalive_expected_lengths: get::<Option<serde_json::Value>>(
             &row,
             "session_keepalive_expected_lengths",
         )?
         .map(|values| {
-            let lengths = values
-                .into_iter()
-                .map(|value| {
-                    u32::try_from(value)
-                        .map_err(|_| invalid("invalid session keepalive expected lengths"))
-                })
-                .collect::<Result<Vec<_>, _>>()?;
+            let lengths: Vec<gateway_core::account::SessionStateLength> =
+                serde_json::from_value(values)
+                    .map_err(|_| invalid("invalid session keepalive expected lengths"))?;
             gateway_core::account::validate_session_keepalive_expected_lengths(&lengths)
                 .map_err(|_| invalid("invalid session keepalive expected lengths"))?;
             Ok(lengths)

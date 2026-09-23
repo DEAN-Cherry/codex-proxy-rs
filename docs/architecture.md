@@ -201,6 +201,8 @@ Images 与 standalone Search 是 OpenAI Provider 自有端点：两者都不参�
 
 OpenAI 的可选 State 重写由私有 `session_manager` 持有探测生命周期，通过 Core 的 `ProviderSessionTicketPort` 在 Store 的 Redis 适配器中保存账号＋模型票据。Provider Bundle 共享该服务给受 Host 监督的 Worker、管理端口、选号器和发送前检查；Core 提供账号／全局开关、模型选择与运行策略合同。运维 Client 独立绑定测试通过的动态代理，强制 HTTP/1.1 并禁止连接复用；业务 HTTP/WS 出口不变。功能默认关闭，启用后受管理的账号／模型缺少符合当前长度规则的有效票据时按 fail-closed 排除。失败预算按账号和模型独立维护，后台不会自动重置已耗尽的预算。协议准入、TTL 和恢复边界见 [会话 State 刷新](api.md#会话-state-刷新)。
 
+正常业务响应的 State 摘要也由该服务按账号、模型有界保留，接收 HTTP 头和流式 metadata，不依赖重写开关，不触发额外探测或票据写入。观测记录器随请求冻结账号代次，账号失效后的在途响应不能恢复旧观测；业务与刷新观测独立记录，由管理读取投影最近值。
+
 Core 只理解 `Operation`、能力要求、Provider 候选、稳定错误和 canonical event，不读取 Provider SDK
 类型。Provider 独占 credential schema、OAuth、账号选择、模型目录、额度投影和上游 transport。
 

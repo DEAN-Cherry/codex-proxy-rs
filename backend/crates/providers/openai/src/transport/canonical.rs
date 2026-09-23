@@ -51,6 +51,7 @@ pub struct CodexCanonicalDecoder {
     response_service_tier: Option<String>,
     response_model: ResponseModelObservation,
     reported_model: Option<String>,
+    turn_state_update: Option<String>,
     web_search_pricing: Option<WebSearchPricing>,
     timing_signals: ResponseEventSignals,
     raw_sse_passthrough: bool,
@@ -160,6 +161,7 @@ impl CodexCanonicalDecoder {
             response_service_tier: None,
             response_model: ResponseModelObservation::default(),
             reported_model: None,
+            turn_state_update: None,
             web_search_pricing: None,
             pricing: None,
             timing_signals: ResponseEventSignals::default(),
@@ -255,6 +257,10 @@ impl CodexCanonicalDecoder {
         }
     }
 
+    pub(crate) fn take_turn_state_update(&mut self) -> Option<String> {
+        self.turn_state_update.take()
+    }
+
     /// 官方服务端报告优先；缺少报告时仅使用正文明确声明，不使用请求兜底值。
     #[must_use]
     pub fn response_model(&self) -> Option<&str> {
@@ -331,6 +337,10 @@ impl CodexCanonicalDecoder {
         self.response_model.observe(event_type, &value);
         if let Some(model) = super::response_meta::reported_model_from_event(&value) {
             self.reported_model = Some(model.to_owned());
+        }
+        // 复用已解码的 metadata 提取观测，不重新扫描 SSE，也不改变原文交付。
+        if let Some(state) = super::protocol::websocket::websocket_metadata_turn_state(&value) {
+            self.turn_state_update = Some(state);
         }
         let signals = response_event_signals(event_type, &value);
         self.merge_timing_signals(signals);

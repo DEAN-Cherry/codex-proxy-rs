@@ -165,6 +165,7 @@ struct RawJsonEndpointRequest {
 }
 
 pub(super) struct ColdResponse {
+    pub(super) state_observer: Option<crate::session_manager::StateObservationRecorder>,
     pub(super) client: CodexBackendClient,
     pub(super) response_origin: Url,
     pub(super) request: CodexResponsesRequest,
@@ -555,6 +556,7 @@ fn image_response_metering(
 
 pub(super) fn cold_response_stream(response: ColdResponse) -> EventStream {
     let ColdResponse {
+        state_observer,
         client,
         response_origin,
         request,
@@ -631,6 +633,12 @@ pub(super) fn cold_response_stream(response: ColdResponse) -> EventStream {
             _ => None,
         };
         if let Err(CodexHandshakeAttemptError::Client(error)) = &response {
+            if let Some(observer) = &state_observer
+                && let crate::transport::CodexClientError::Upstream { client_response: Some(response), .. } = error
+                && let Some((_, state)) = response.client_headers().iter().find(|(name, _)| name.eq_ignore_ascii_case("x-codex-turn-state"))
+                && let Ok(state) = std::str::from_utf8(state) {
+                    observer.record(state, Some(response.status())).await;
+            }
             log_client_upstream_error(
                 UpstreamErrorLogContext::new(&context, &active_account, None),
                 error,
@@ -679,6 +687,10 @@ pub(super) fn cold_response_stream(response: ColdResponse) -> EventStream {
             .await;
             Err(failure.error)?;
             return;
+        }
+        if let Some(observer) = &state_observer
+            && let Some(state) = response.turn_state.as_deref() {
+                observer.record(state, response.diagnostics.status_code).await;
         }
         if let Some(capture) = session_capture.as_mut() {
             capture.continuation_scope = Some(if capture.response_store {
@@ -806,6 +818,7 @@ pub(super) fn cold_response_stream(response: ColdResponse) -> EventStream {
                         observation_state.merge_rate_limit_headers(&update_headers)
                     };
                     let metadata_merge = merge_response_metadata_updates(
+                        state_observer.as_ref(),
                         response_metadata_updates.as_ref(),
                         &mut session_capture,
                         &mut observation_state,
@@ -880,6 +893,7 @@ pub(super) fn cold_response_stream(response: ColdResponse) -> EventStream {
                 }
             };
             let metadata_merge = merge_response_metadata_updates(
+                state_observer.as_ref(),
                 response_metadata_updates.as_ref(),
                 &mut session_capture,
                 &mut observation_state,
@@ -1057,6 +1071,7 @@ pub(super) fn cold_response_stream(response: ColdResponse) -> EventStream {
             .await;
         }
         let metadata_changed = merge_response_metadata_updates(
+            state_observer.as_ref(),
             response_metadata_updates.as_ref(),
             &mut session_capture,
             &mut observation_state,
@@ -1130,11 +1145,17 @@ pub(super) fn cold_response_stream(response: ColdResponse) -> EventStream {
 }
 
 async fn merge_response_metadata_updates(
+    state_observer: Option<&crate::session_manager::StateObservationRecorder>,
     updates: Option<&CodexResponseMetadataUpdates>,
     session_capture: &mut Option<OpenAiSessionCapture>,
     observation_state: &mut OpenAiResponseObservationState,
     decoder: &mut CodexCanonicalDecoder,
 ) -> Option<bool> {
+    if let Some(state) = decoder.take_turn_state_update()
+        && let Some(observer) = state_observer
+    {
+        observer.record(&state, None).await;
+    }
     let updates = updates?;
     let mut pending = updates.lock().await;
     let turn_state = pending.turn_state.take();
@@ -1145,6 +1166,9 @@ async fn merge_response_metadata_updates(
     }
     let mut changed = false;
     if let Some(turn_state) = turn_state {
+        if let Some(observer) = state_observer {
+            observer.record(&turn_state, None).await;
+        }
         if let Some(capture) = session_capture.as_mut() {
             capture.turn_state = Some(turn_state.clone());
         }

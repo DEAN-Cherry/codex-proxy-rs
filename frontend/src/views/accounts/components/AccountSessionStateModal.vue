@@ -43,7 +43,7 @@ const successCount = computed(() => models.value.filter(model => model.expireAt 
           <span class="text-cp-text-secondary">
             最近响应：{{ model.observation.stateLength == null ? '未返回 State' : `${model.observation.stateLength} 字节` }}
           </span>
-          <span :class="model.observation.validation === 'accepted' ? 'text-cp-text-secondary' : 'text-cp-warning-text'">
+          <span :class="['accepted', 'observed'].includes(model.observation.validation) ? 'text-cp-text-secondary' : 'text-cp-warning-text'">
             {{ stateValidationLabel(model.observation) }} · {{ formatDateTime(model.observation.observedAt) }}
           </span>
         </div>

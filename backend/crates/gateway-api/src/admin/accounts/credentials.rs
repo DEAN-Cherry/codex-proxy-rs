@@ -220,7 +220,8 @@ pub struct UpdateAccountRequest {
         default,
         deserialize_with = "super::wire::deserialize_optional_nullable"
     )]
-    pub session_keepalive_expected_lengths: Option<Option<Vec<u32>>>,
+    pub session_keepalive_expected_lengths:
+        Option<Option<Vec<gateway_core::account::SessionStateLength>>>,
     #[serde(
         default,
         deserialize_with = "super::wire::deserialize_optional_nullable"
@@ -249,7 +250,7 @@ impl UpdateAccountRequest {
             gateway_core::account::validate_session_keepalive_expected_lengths(lengths)
                 .map_err(|_| WireValidationError::new("sessionKeepaliveExpectedLengths"))?;
         } else if let Some(Some(length)) = self.session_keepalive_expected_length {
-            gateway_core::account::validate_session_keepalive_expected_lengths(&[length])
+            gateway_core::account::validate_session_keepalive_expected_lengths(&[length.into()])
                 .map_err(|_| WireValidationError::new("sessionKeepaliveExpectedLengths"))?;
         }
         Ok(())
@@ -259,7 +260,7 @@ impl UpdateAccountRequest {
         self.validate()?;
         let expected_lengths = self.session_keepalive_expected_lengths.clone().or_else(|| {
             self.session_keepalive_expected_length
-                .map(|length| length.map(|length| vec![length]))
+                .map(|length| length.map(|length| vec![length.into()]))
         });
         if let Some(models) = &self.session_keepalive_models {
             gateway_core::account::validate_session_keepalive_models(models)

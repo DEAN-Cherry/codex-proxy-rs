@@ -27,14 +27,14 @@ const models = computed(() => [...new Set([
         <template v-if="item.observation?.stateLength != null"> · {{ item.observation.stateLength }} 字节</template>
       </span>
       <template v-if="item.observation">
-        <span :class="item.observation.validation === 'accepted' ? 'text-cp-text-secondary' : 'text-cp-warning-text'">
+        <span :class="['accepted', 'observed'].includes(item.observation.validation) ? 'text-cp-text-secondary' : 'text-cp-warning-text'">
           {{ stateValidationLabel(item.observation) }}
           <time class="text-cp-text-tertiary" :datetime="item.observation.observedAt" :title="formatDateTime(item.observation.observedAt)"> · {{ formatTime(item.observation.observedAt) }}</time>
         </span>
       </template>
-      <span v-else class="text-cp-text-quaternary">暂无刷新观测</span>
+      <span v-else class="text-cp-text-quaternary">暂无 State 观测</span>
       <span v-if="item.cachedLength != null" class="text-cp-text-secondary">可用缓存 {{ item.cachedLength }} 字节</span>
     </div>
   </div>
-  <span v-else class="text-cp-text-quaternary">暂无刷新观测</span>
+  <span v-else class="text-cp-text-quaternary">暂无 State 观测</span>
 </template>

@@ -765,7 +765,7 @@ const fn status_projection(status: AccountStatus) -> AccountStatusProjection {
 pub struct ProviderAccount {
     enable_session_keepalive: bool,
     session_keepalive_models: Vec<String>,
-    session_keepalive_expected_lengths: Option<Vec<u32>>,
+    session_keepalive_expected_lengths: Option<Vec<SessionStateLength>>,
     id: ProviderAccountId,
     provider: ProviderKind,
     name: String,
@@ -803,12 +803,15 @@ impl ProviderAccount {
     }
 
     #[must_use]
-    pub fn session_keepalive_expected_lengths(&self) -> Option<&[u32]> {
+    pub fn session_keepalive_expected_lengths(&self) -> Option<&[SessionStateLength]> {
         self.session_keepalive_expected_lengths.as_deref()
     }
 
     #[must_use]
-    pub fn with_session_keepalive_expected_lengths(mut self, lengths: Option<Vec<u32>>) -> Self {
+    pub fn with_session_keepalive_expected_lengths(
+        mut self,
+        lengths: Option<Vec<SessionStateLength>>,
+    ) -> Self {
         self.session_keepalive_expected_lengths = lengths;
         self
     }
@@ -1454,26 +1457,64 @@ pub struct AccountStateChange {
     pub message: Option<String>,
 }
 
-/// 长度是可选的账号准入条件，配置范围与数据库约束保持一致。
-pub fn validate_session_keepalive_expected_length(length: u32) -> Result<(), &'static str> {
-    if (100..=2000).contains(&length) {
-        Ok(())
-    } else {
-        Err("State 长度应为 100～2000 字节")
+/// 闭区间保持紧凑表示，不按跨度展开，避免大范围规则放大存储与校验成本。
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
+#[serde(untagged, deny_unknown_fields)]
+pub enum SessionStateLength {
+    Exact(u32),
+    Range { min: u32, max: u32 },
+}
+
+impl From<u32> for SessionStateLength {
+    fn from(value: u32) -> Self {
+        Self::Exact(value)
     }
 }
 
-pub fn validate_session_keepalive_expected_lengths(lengths: &[u32]) -> Result<(), &'static str> {
+impl SessionStateLength {
+    #[must_use]
+    pub const fn bounds(self) -> (u32, u32) {
+        match self {
+            Self::Exact(value) => (value, value),
+            Self::Range { min, max } => (min, max),
+        }
+    }
+
+    #[must_use]
+    pub fn contains(self, length: usize) -> bool {
+        let (min, max) = self.bounds();
+        u32::try_from(length).is_ok_and(|length| (min..=max).contains(&length))
+    }
+}
+
+/// 长度规则仅限制正整数，留空的不限长度语义由调用方处理。
+pub fn validate_session_keepalive_expected_length(length: u32) -> Result<(), &'static str> {
+    if length > 0 {
+        Ok(())
+    } else {
+        Err("State 长度应为 1～4294967295 的整数")
+    }
+}
+
+pub fn validate_session_keepalive_expected_lengths(
+    lengths: &[SessionStateLength],
+) -> Result<(), &'static str> {
     if lengths.is_empty()
         || lengths.len() > 32
-        || lengths.iter().any(|length| !(100..=2000).contains(length))
+        || lengths.iter().any(|length| {
+            let (min, max) = length.bounds();
+            min == 0 || min > max
+        })
         || lengths
             .iter()
+            .map(|length| length.bounds())
             .collect::<std::collections::BTreeSet<_>>()
             .len()
             != lengths.len()
     {
-        return Err("State 长度列表应包含 1～32 个不重复的 100～2000 整数");
+        return Err("State 长度需为 1～32 个不重复的正整数或有效闭区间");
     }
     Ok(())
 }

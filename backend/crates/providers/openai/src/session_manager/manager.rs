@@ -48,12 +48,14 @@ const MAX_REFRESH_ATTEMPTS: u32 = 100;
 const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(30);
 const REFRESH_BEFORE_SECONDS: i64 = 600;
 const WARMUP_INTERVAL_SECONDS: u64 = 6;
+const MAX_BUSINESS_OBSERVATION_MODELS: usize = 64;
 
 #[derive(Default)]
 struct SessionCache {
     generation: u64,
     cancelled: tokio_util::sync::CancellationToken,
     observations: BTreeMap<String, SessionStateObservation>,
+    business_observations: BTreeMap<String, SessionStateObservation>,
 }
 
 #[derive(Default)]
@@ -62,6 +64,46 @@ struct AccountSessions {
     attempts: Mutex<HashMap<String, u32>>,
     cache: RwLock<SessionCache>,
     retry_after: Mutex<HashMap<String, tokio::time::Instant>>,
+}
+
+/// 请求开始时冻结账号观测代次，避免失效前的在途响应重新填充旧账号状态。
+pub(crate) struct StateObservationRecorder {
+    sessions: Arc<AccountSessions>,
+    generation: u64,
+    model: String,
+}
+
+impl StateObservationRecorder {
+    pub(crate) async fn record(&self, state: &str, http_status: Option<u16>) {
+        let Ok(length) = u32::try_from(state.len()) else {
+            return;
+        };
+        let mut cache = self.sessions.cache.write().await;
+        if cache.generation != self.generation {
+            return;
+        }
+        let observations = &mut cache.business_observations;
+        // 业务模型目录非穷尽列表，只保留有界的最近模型观测。
+        if !observations.contains_key(&self.model)
+            && observations.len() >= MAX_BUSINESS_OBSERVATION_MODELS
+            && let Some(oldest) = observations
+                .iter()
+                .min_by_key(|(_, item)| item.observed_at)
+                .map(|(model, _)| model.clone())
+        {
+            observations.remove(&oldest);
+        }
+        observations.insert(
+            self.model.clone(),
+            SessionStateObservation {
+                state_length: Some(length),
+                observed_at: Utc::now(),
+                http_status,
+                source: gateway_admin::model::accounts::SessionStateObservationSource::Business,
+                validation: SessionStateValidation::Observed,
+            },
+        );
+    }
 }
 
 /// Provider 内自动与手动刷新共享的服务；也可用于显式装配 Provider。
@@ -105,6 +147,7 @@ impl SessionManager {
         cache.cancelled.cancel();
         cache.cancelled = tokio_util::sync::CancellationToken::new();
         cache.observations.clear();
+        cache.business_observations.clear();
         tracing::info!(target: "session_keepalive", account_id = account_id.as_str(), reason = "account_unavailable", "Session tickets invalidated");
         if let Some(tickets) = &self.tickets
             && tickets.clear(account_id).await.is_err()
@@ -172,8 +215,34 @@ impl SessionManager {
     ) -> BTreeMap<String, SessionStateObservation> {
         let sessions = self.accounts.read().await.get(account_id).cloned();
         match sessions {
-            Some(sessions) => sessions.cache.read().await.observations.clone(),
+            Some(sessions) => {
+                let cache = sessions.cache.read().await;
+                let mut latest = cache.observations.clone();
+                for (model, observation) in &cache.business_observations {
+                    if latest
+                        .get(model)
+                        .is_none_or(|previous| observation.observed_at >= previous.observed_at)
+                    {
+                        latest.insert(model.clone(), observation.clone());
+                    }
+                }
+                latest
+            }
             None => BTreeMap::new(),
+        }
+    }
+
+    pub(crate) async fn observation_recorder(
+        &self,
+        account_id: &ProviderAccountId,
+        model: &str,
+    ) -> StateObservationRecorder {
+        let sessions = self.account_sessions(account_id).await;
+        let generation = sessions.cache.read().await.generation;
+        StateObservationRecorder {
+            sessions,
+            generation,
+            model: model.to_owned(),
         }
     }
 
@@ -581,7 +650,8 @@ impl SessionManager {
         let observation = SessionStateObservation {
             state_length: state_header.and_then(|value| u32::try_from(value.as_bytes().len()).ok()),
             observed_at: Utc::now(),
-            http_status: status.as_u16(),
+            http_status: Some(status.as_u16()),
+            source: gateway_admin::model::accounts::SessionStateObservationSource::Refresh,
             validation,
         };
         let (sessions, generation) = observation_context;
@@ -895,12 +965,13 @@ fn admin_error(kind: ProviderAdminErrorKind, message: &'static str) -> ProviderA
     ProviderAdminError::new(kind).with_public_message(message)
 }
 
-fn is_valid_state_length_for_account(expected: Option<&[u32]>, len: usize) -> bool {
+fn is_valid_state_length_for_account(
+    expected: Option<&[gateway_core::account::SessionStateLength]>,
+    len: usize,
+) -> bool {
     match expected {
-        Some(lengths) => lengths
-            .iter()
-            .any(|expected| usize::try_from(*expected).ok() == Some(len)),
-        None => (200..=600).contains(&len),
+        Some(lengths) => lengths.iter().any(|expected| expected.contains(len)),
+        None => true,
     }
 }
 
@@ -908,7 +979,10 @@ fn refresh_limit_error() -> String {
     format!("连续失败达 {MAX_REFRESH_ATTEMPTS} 轮，已暂停重写，请手动强制刷新")
 }
 
-fn valid_state_for_account(expected: Option<&[u32]>, state: &str) -> bool {
+fn valid_state_for_account(
+    expected: Option<&[gateway_core::account::SessionStateLength]>,
+    state: &str,
+) -> bool {
     is_valid_state_length_for_account(expected, state.len())
         && state.is_ascii()
         && state.starts_with("gAAAAA")

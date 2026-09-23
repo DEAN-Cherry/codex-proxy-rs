@@ -266,13 +266,14 @@ pub struct AccountSummaryView {
     pub error: u64,
 }
 
-/// 最近刷新响应摘要，与业务缓存分开序列化。
+/// 最近 State 观测摘要，与业务缓存分开序列化。
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionStateObservationView {
     pub state_length: Option<u32>,
     pub observed_at: String,
-    pub http_status: u16,
+    pub http_status: Option<u16>,
+    pub source: &'static str,
     pub validation: &'static str,
 }
 
@@ -283,7 +284,14 @@ impl From<gateway_admin::model::accounts::SessionStateObservation> for SessionSt
             state_length: value.state_length,
             observed_at: value.observed_at.to_rfc3339(),
             http_status: value.http_status,
+            source: match value.source {
+                gateway_admin::model::accounts::SessionStateObservationSource::Business => {
+                    "business"
+                }
+                gateway_admin::model::accounts::SessionStateObservationSource::Refresh => "refresh",
+            },
             validation: match value.validation {
+                SessionStateValidation::Observed => "observed",
                 SessionStateValidation::Accepted => "accepted",
                 SessionStateValidation::InvalidLength => "invalid_length",
                 SessionStateValidation::InvalidFormat => "invalid_format",
@@ -300,7 +308,7 @@ impl From<gateway_admin::model::accounts::SessionStateObservation> for SessionSt
 pub struct AccountView {
     pub enable_session_keepalive: bool,
     pub session_keepalive_models: Vec<String>,
-    pub session_keepalive_expected_lengths: Option<Vec<u32>>,
+    pub session_keepalive_expected_lengths: Option<Vec<gateway_core::account::SessionStateLength>>,
     pub session_keepalive_state_lengths: std::collections::BTreeMap<String, u32>,
     pub session_keepalive_observations:
         std::collections::BTreeMap<String, SessionStateObservationView>,

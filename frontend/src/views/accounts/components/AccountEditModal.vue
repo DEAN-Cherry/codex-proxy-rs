@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { AccountRow } from '../constants'
 import type { ApiKeyAccountForm } from '../utils/upstreamApiKey'
-import type { AccountGroup, AccountModelAccess } from '@/api'
+import type { AccountGroup, AccountModelAccess, SessionStateLength } from '@/api'
 import { shallowRef, watch } from 'vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -12,6 +12,7 @@ import BaseSwitch from '@/components/base/BaseSwitch.vue'
 import BaseTag from '@/components/base/BaseTag.vue'
 import BaseTextarea from '@/components/base/BaseTextarea.vue'
 import ProviderIconGroup from '@/components/ProviderIconGroup.vue'
+import { formatStateLength, normalizeStateLengths, parseStateLengths } from '../utils/sessionStateLengths'
 import AccountApiKeyFields from './AccountApiKeyFields.vue'
 import AccountIdentityCell from './AccountIdentityCell.vue'
 import AccountPlanBadge from './AccountPlanBadge.vue'
@@ -37,7 +38,7 @@ const apiKey = defineModel<ApiKeyAccountForm>('apiKey', { required: true })
 const notes = defineModel<string>('notes', { required: true })
 const enabled = defineModel<boolean>('enabled', { required: true })
 const sessionKeepaliveModels = defineModel<string[]>('sessionKeepaliveModels', { required: true })
-const sessionKeepaliveExpectedLengths = defineModel<number[]>('sessionKeepaliveExpectedLengths', { required: true })
+const sessionKeepaliveExpectedLengths = defineModel<SessionStateLength[]>('sessionKeepaliveExpectedLengths', { required: true })
 const enableSessionKeepalive = defineModel<boolean>('enableSessionKeepalive', { required: true })
 const concurrencyLimit = defineModel<string>('concurrencyLimit', { required: true })
 const modelAccess = defineModel<AccountModelAccess | undefined>('modelAccess', { required: true })
@@ -57,17 +58,16 @@ function addExpectedLength() {
   const input = newExpectedLength.value.trim()
   if (!input)
     return true
-  const values = input.split(/[,，\s]+/)
-  if (values.some(value => !/^\d+$/.test(value) || Number(value) < 100 || Number(value) > 2000)) {
-    lengthError.value = '请输入 100～2000 的整数，多个值用逗号分隔'
+  try {
+    sessionKeepaliveExpectedLengths.value = normalizeStateLengths([
+      ...sessionKeepaliveExpectedLengths.value,
+      ...parseStateLengths(input),
+    ])
+  }
+  catch (error) {
+    lengthError.value = error instanceof Error ? error.message : 'State 长度格式无效'
     return false
   }
-  const lengths = [...new Set([...sessionKeepaliveExpectedLengths.value, ...values.map(Number)])]
-  if (lengths.length > 32) {
-    lengthError.value = '最多配置 32 个允许长度'
-    return false
-  }
-  sessionKeepaliveExpectedLengths.value = lengths.sort((a, b) => a - b)
   newExpectedLength.value = ''
   lengthError.value = ''
   return true
@@ -79,8 +79,8 @@ function save() {
   emit('save')
 }
 
-function removeExpectedLength(value: number) {
-  sessionKeepaliveExpectedLengths.value = sessionKeepaliveExpectedLengths.value.filter(length => length !== value)
+function removeExpectedLength(value: SessionStateLength) {
+  sessionKeepaliveExpectedLengths.value = sessionKeepaliveExpectedLengths.value.filter(length => formatStateLength(length) !== formatStateLength(value))
 }
 </script>
 
@@ -150,26 +150,29 @@ function removeExpectedLength(value: number) {
       <BaseFormItem
         v-if="enableSessionKeepalive && account.provider === 'openai' && account.authenticationKind === 'oauth'"
         label="期望 State 长度（字节）"
-        description="留空接受 200～600 字节，配置多个值时仅接受其中任意一个"
+        description="留空不限长度，支持单值和闭区间，多个规则用逗号分隔"
         :error="lengthError"
       >
         <div class="grid gap-2">
           <div v-if="sessionKeepaliveExpectedLengths.length" class="flex flex-wrap gap-2">
-            <BaseTag v-for="length in sessionKeepaliveExpectedLengths" :key="length" type="info" round>
-              {{ length }}
-              <button type="button" class="ml-1 border-0 bg-transparent p-0 text-current" :disabled="saving" :aria-label="`删除允许长度 ${length}`" @click="removeExpectedLength(length)">
+            <BaseTag v-for="length in sessionKeepaliveExpectedLengths" :key="formatStateLength(length)" type="info" round>
+              {{ formatStateLength(length) }}
+              <button type="button" class="ml-1 border-0 bg-transparent p-0 text-current" :disabled="saving" :aria-label="`删除允许长度 ${formatStateLength(length)}`" @click="removeExpectedLength(length)">
                 ×
               </button>
             </BaseTag>
           </div>
           <div class="flex gap-2">
-            <BaseInput v-model="newExpectedLength" inputmode="numeric" placeholder="例如 292,312，回车添加" :disabled="saving" @keydown.enter.prevent="addExpectedLength" />
+            <BaseInput v-model="newExpectedLength" class="min-w-0 flex-1" placeholder="例如 200,300,400-500" :disabled="saving" @keydown.enter.prevent="addExpectedLength" />
             <BaseButton variant="secondary" :disabled="saving || !newExpectedLength.trim()" @click="addExpectedLength">
               添加
             </BaseButton>
           </div>
-          <AccountSessionStateSummary :account="account" />
         </div>
+      </BaseFormItem>
+
+      <BaseFormItem v-if="account.provider === 'openai'" label="State 观测">
+        <AccountSessionStateSummary :account="account" />
       </BaseFormItem>
 
       <BaseFormItem label="备注">

@@ -65,6 +65,104 @@ use crate::support::{
 use crate::transport::accept_codex_test_websocket;
 
 #[tokio::test]
+async fn business_state_observations_work_without_rewrite_for_http_headers_and_metadata() {
+    use gateway_admin::model::accounts::{SessionStateObservationSource, SessionStateValidation};
+    for source in ["header", "metadata", "error", "absent", "invalidated"] {
+        let store = Arc::new(MemoryAccountStore::default());
+        create_account(&store, "acct_provider_contract").await;
+        store.set_session_expected_length("acct_provider_contract", Some(292));
+        let server = MockServer::start().await;
+        let state = format!("gAAAAA{}", "A".repeat(774));
+        let metadata = if source == "metadata" {
+            format!(
+                "data: {}\n\n",
+                json!({"type":"response.metadata","headers":{"x-codex-turn-state":state}})
+            )
+        } else {
+            String::new()
+        };
+        let body = format!(
+            "{metadata}data: {}\n\n",
+            json!({"type":"response.completed","response":{"id":"resp_observed","model":"gpt-5.4","status":"completed","output":[]}})
+        );
+        let mut response = ResponseTemplate::new(if source == "error" { 503 } else { 200 })
+            .insert_header("content-type", "text/event-stream")
+            .set_body_string(body);
+        if matches!(source, "header" | "error" | "invalidated") {
+            response = response.insert_header("x-codex-turn-state", state);
+        }
+        Mock::given(method("POST"))
+            .and(path("/codex/responses"))
+            .respond_with(response)
+            .expect(1)
+            .mount(&server)
+            .await;
+        let manager = state_observation_manager(&store, server.uri());
+        let id = ProviderAccountId::new("acct_provider_contract").unwrap();
+        assert!(
+            !store
+                .account(id.as_str())
+                .unwrap()
+                .enable_session_keepalive()
+        );
+        let mut stream = provider_with_base_url(&store, server.uri())
+            .with_session_manager(manager.clone())
+            .execute(
+                planned_request("openai", http_generate_operation()),
+                context("req_business_observation", CancellationToken::new()),
+            )
+            .await
+            .unwrap();
+        if source == "invalidated" {
+            manager.invalidate(&id).await;
+        }
+        let mut failed = false;
+        while let Some(event) = stream.next().await {
+            if let Err(error) = event {
+                assert_eq!(source, "error", "{error:?}");
+                failed = true;
+            }
+        }
+        assert_eq!(failed, source == "error");
+        let observations = manager.state_observations(&id).await;
+        if matches!(source, "absent" | "invalidated") {
+            assert!(observations.is_empty());
+        } else {
+            let observation = observations
+                .get("gpt-5.4")
+                .unwrap_or_else(|| panic!("missing {source} State observation"));
+            assert_eq!(observation.state_length, Some(780));
+            assert_eq!(observation.source, SessionStateObservationSource::Business);
+            assert_eq!(observation.validation, SessionStateValidation::Observed);
+            if source == "error" {
+                assert_eq!(observation.http_status, Some(503));
+            }
+        }
+        assert!(manager.state_lengths(&id).await.unwrap().is_empty());
+        assert!(
+            manager
+                .state_observations(&ProviderAccountId::new("acct_other").unwrap())
+                .await
+                .is_empty()
+        );
+        assert_eq!(server.received_requests().await.unwrap().len(), 1);
+    }
+}
+
+fn state_observation_manager(
+    store: &Arc<MemoryAccountStore>,
+    base_url: String,
+) -> Arc<provider_openai::SessionManager> {
+    Arc::new(provider_openai::SessionManager::new(
+        store.repository(),
+        crate::support::runtime_policy(),
+        wire_profile(),
+        base_url,
+        None,
+    ))
+}
+
+#[tokio::test]
 async fn responses_bill_sent_model_and_observe_unpriced_response_without_rewriting_it() {
     let store = Arc::new(MemoryAccountStore::default());
     create_account(&store, "acct_provider_contract").await;
@@ -4342,7 +4440,9 @@ async fn websocket_turn_state_metadata_is_exposed_through_response_observation()
         websocket.close(None).await.expect("close WebSocket");
     });
 
+    let manager = state_observation_manager(&store, base_url.clone());
     let mut stream = provider_with_base_url(&store, base_url)
+        .with_session_manager(manager.clone())
         .execute(
             planned_request("openai", generate_operation()),
             context("req_websocket_turn_state", CancellationToken::new()),
@@ -4369,6 +4469,26 @@ async fn websocket_turn_state_metadata_is_exposed_through_response_observation()
     server.await.expect("WebSocket server");
 
     assert!(observed_turn_state);
+    let id = ProviderAccountId::new("acct_websocket_turn_state").unwrap();
+    let observation = manager
+        .state_observations(&id)
+        .await
+        .remove("gpt-5.4")
+        .unwrap();
+    assert_eq!(
+        observation.state_length,
+        Some("turn-state-from-websocket".len() as u32)
+    );
+    assert_eq!(
+        observation.source,
+        gateway_admin::model::accounts::SessionStateObservationSource::Business
+    );
+    assert!(
+        !store
+            .account(id.as_str())
+            .unwrap()
+            .enable_session_keepalive()
+    );
 }
 
 #[tokio::test]
