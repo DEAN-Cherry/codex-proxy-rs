@@ -232,6 +232,29 @@ struct PricingRule {
 // 已按 https://developers.openai.com/api/docs/deprecations 核验至 2026-09-13，
 // 移除已关闭的型号；仅宣布弃用但尚未到关闭日期的型号继续保留。
 const PRICING_RULES: &[PricingRule] = &[
+    // Sol/Luna 于 2026-09-23 核验，分别采用官方模型页的独立价格，不继承 5.6 系列。
+    // https://developers.openai.com/api/docs/models/gpt-6-sol
+    // https://developers.openai.com/api/docs/models/gpt-6-luna
+    PricingRule {
+        model: "gpt-6-sol",
+        pricing: ModelPricing::new(20_000, 100_000, 2_000)
+            .with_cache_write(125)
+            .with_flex(10_000, 50_000, 1_000)
+            .with_fast(40_000, 200_000, 4_000)
+            .with_long(40_000, 150_000, 4_000)
+            .with_long_flex(20_000, 75_000, 2_000)
+            .with_long_fast(80_000, 300_000, 8_000),
+    },
+    PricingRule {
+        model: "gpt-6-luna",
+        pricing: ModelPricing::new(1_000, 5_000, 100)
+            .with_cache_write(125)
+            .with_flex(500, 2_500, 50)
+            .with_fast(2_000, 10_000, 200)
+            .with_long(2_000, 7_500, 200)
+            .with_long_flex(1_000, 3_750, 100)
+            .with_long_fast(4_000, 15_000, 400),
+    },
     // Astra：https://developers.openai.com/api/docs/models/gpt-6-astra
     // 已于 2026-09-09 对照官方价目表核验。
     PricingRule {
@@ -842,7 +865,7 @@ fn reasoning_model(model: &str) -> bool {
     let normalized = normalize_model_name(model);
     let model = pricing_model_name(&normalized);
     model.starts_with("gpt-5")
-        || model == "gpt-6-astra"
+        || matches!(model, "gpt-6-astra" | "gpt-6-sol" | "gpt-6-luna")
         || model.starts_with("o1")
         || model.starts_with("o3")
         || model.starts_with("o4")

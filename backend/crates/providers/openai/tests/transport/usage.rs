@@ -77,6 +77,35 @@ fn astra_billing_should_preserve_components_across_tiers_and_context_boundary() 
 }
 
 #[test]
+fn sol_and_luna_billing_should_cover_cache_tiers_and_long_context_boundary() {
+    // 固定混合用量核对总额，确保缓存写入、档位和长上下文同时参与结算。
+    for (model, short_total, long_total) in [
+        ("gpt-6-sol", 5_440_190_000_u64, 10_880_170_000_u64),
+        ("gpt-6-luna", 272_009_500, 544_008_500),
+    ] {
+        for (input, expected) in [(272_000, short_total), (272_001, long_total)] {
+            for (tier, total, multiplier) in [
+                (None, expected, 100),
+                (Some("flex"), expected / 2, 50),
+                (Some("fast"), expected * 2, 200),
+                (Some("priority"), expected * 2, 200),
+            ] {
+                let breakdown =
+                    openai_billing_breakdown(model, billing_usage(input, 5, 20, 10), tier)
+                        .expect("已公布的 Sol/Luna 价格");
+                assert_eq!(
+                    breakdown.total_amount().amount().scaled(),
+                    u128::from(total),
+                    "{model} {input} {tier:?}"
+                );
+                assert_eq!(breakdown.multiplier_percent(), multiplier);
+                assert_eq!(breakdown.long_context_billing_applied(), input > 272_000);
+            }
+        }
+    }
+}
+
+#[test]
 fn billing_breakdown_should_preserve_input_output_and_cache_components() {
     let breakdown = openai_billing_breakdown("gpt-5.6-sol", billing_usage(100, 5, 20, 10), None)
         .expect("known model pricing");
@@ -324,6 +353,8 @@ fn billing_should_keep_deprecated_models_before_their_shutdown_dates() {
 fn billing_should_not_inherit_prices_for_unknown_models_or_tiers() {
     for model in [
         "gpt-6-astra-future",
+        "gpt-6-sol-future",
+        "gpt-6-luna-2099-01-01",
         "gpt-6-astra-2099-01-01",
         "gpt-5.6-sol-wm",
         "gpt-5.6-cyber-future",

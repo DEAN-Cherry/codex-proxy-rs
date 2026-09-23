@@ -46,6 +46,38 @@ async fn refresh_and_rewrite_isolate_every_account_and_model_using_only_oam_prox
 }
 
 #[tokio::test]
+async fn configured_sol_and_luna_refresh_and_rewrite_independent_states() {
+    let proxy = MockServer::start().await;
+    let (store, _, manager) = fixture(Some(&proxy.uri())).await;
+    let models = ["gpt-6-sol", "gpt-6-luna"];
+    store.set_session_models("acct_a", models.map(str::to_owned).to_vec());
+    for model in models {
+        mock_model(&proxy, "acct_a", model, success(model)).await;
+    }
+    let account = store.account("acct_a").unwrap();
+    for model in models {
+        assert!(!manager.available(&account, model).await);
+    }
+    let result = manager.refresh(account.id()).await.unwrap();
+    assert_eq!(result.models.len(), 2);
+    assert!(result.models.iter().all(|item| item.error.is_none()));
+    for model in models {
+        assert!(manager.available(&account, model).await);
+        let mut req = request(model);
+        manager.rewrite(&account, &mut req).await;
+        assert_eq!(req.turn_state.as_deref(), Some(state(model).as_str()));
+        assert_eq!(
+            req.client_metadata().unwrap()["x-codex-turn-state"],
+            state(model)
+        );
+    }
+    let mut unconfigured = request("gpt-6-astra");
+    manager.rewrite(&account, &mut unconfigured).await;
+    assert_eq!(unconfigured.turn_state.as_deref(), Some("client-state"));
+    assert_eq!(proxy.received_requests().await.unwrap().len(), 2);
+}
+
+#[tokio::test]
 async fn disabled_accounts_other_models_and_missing_proxy_never_refresh_or_override() {
     let proxy = MockServer::start().await;
     let (store, policy, manager) = fixture(Some(&proxy.uri())).await;
