@@ -133,6 +133,15 @@ pub trait ProviderAdmin: Send + Sync {
 
     fn provider_kind(&self) -> &ProviderKind;
 
+    /// 最近刷新响应的长度与校验事实，包括未通过准入的结果。
+    async fn session_state_observations(
+        &self,
+        _account_id: &ProviderAccountId,
+    ) -> Result<BTreeMap<String, crate::model::accounts::SessionStateObservation>, ProviderAdminError>
+    {
+        Ok(BTreeMap::new())
+    }
+
     /// 提供该 Provider 的可选客户端身份；通用管理层不解释内部字段。
     fn client_profile_options(
         &self,

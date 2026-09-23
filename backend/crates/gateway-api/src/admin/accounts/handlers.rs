@@ -645,6 +645,7 @@ fn session_model_data(item: gateway_admin::model::accounts::SessionModelRefresh)
     serde_json::json!({
         "model": item.model, "refreshedAt": item.refreshed_at,
         "expireAt": item.expire_at, "error": item.error,
+        "observation": item.observation.map(super::wire::SessionStateObservationView::from),
     })
 }
 

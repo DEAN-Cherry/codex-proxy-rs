@@ -359,7 +359,14 @@ impl DefaultAccountsService {
             usage,
             account: stored.account,
             quota,
-            session_keepalive_state_lengths: BTreeMap::new(),
+            session_keepalive_state_lengths: provider
+                .session_state_lengths(account_id)
+                .await
+                .unwrap_or_default(),
+            session_keepalive_observations: provider
+                .session_state_observations(account_id)
+                .await
+                .unwrap_or_default(),
         })
     }
 }
@@ -413,18 +420,22 @@ impl AccountsService for DefaultAccountsService {
                 .map_err(|_| AdminError::invalid("Provider 账号 ID 不合法"))?;
             let provider = self.providers.require(&item.account.provider_kind).ok();
             match provider {
-                Some(provider) => match provider.session_state_lengths(&account_id).await {
-                    Ok(lengths) => Ok(lengths),
-                    Err(error) => {
-                        tracing::debug!(
-                            account_id = %item.account.id,
-                            error = ?error,
-                            "account directory State length projection unavailable"
-                        );
-                        Ok(BTreeMap::new())
-                    }
-                },
-                None => Ok(BTreeMap::new()),
+                Some(provider) => {
+                    let lengths = provider
+                        .session_state_lengths(&account_id)
+                        .await
+                        .unwrap_or_else(|error| {
+                            tracing::debug!(account_id = %item.account.id, error = ?error,
+                            "account directory State length projection unavailable");
+                            BTreeMap::new()
+                        });
+                    let observations = provider
+                        .session_state_observations(&account_id)
+                        .await
+                        .unwrap_or_default();
+                    Ok((lengths, observations))
+                }
+                None => Ok((BTreeMap::new(), BTreeMap::new())),
             }
         }))
         .await
@@ -477,7 +488,7 @@ impl AccountsService for DefaultAccountsService {
             .into_iter()
             .zip(quotas)
             .zip(state_lengths)
-            .map(|((mut item, quota), state_lengths)| {
+            .map(|((mut item, quota), (state_lengths, observations))| {
                 let usage = api_key_usage.remove(&item.account.id).or_else(|| {
                     quota
                         .usage_window()
@@ -494,6 +505,7 @@ impl AccountsService for DefaultAccountsService {
                     projection: item.projection,
                     quota,
                     session_keepalive_state_lengths: state_lengths,
+                    session_keepalive_observations: observations,
                 }
             })
             .collect();

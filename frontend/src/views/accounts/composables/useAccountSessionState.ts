@@ -29,14 +29,14 @@ export function useAccountSessionState(options: { reload?: () => Promise<unknown
       }, { signal: request.signal })
       if (request.isCurrent(id))
         result.value = data
-      if (request.isCurrent(id) && options.reload)
-        await options.reload()
     }
     catch (error) {
       request.fail(id, error)
     }
     finally {
       request.finish(id)
+      // 停止或关闭刷新也要回读已收到的观测，不能只在成功完成时更新列表。
+      await options.reload?.().catch(() => undefined)
     }
   }
 

@@ -16,6 +16,7 @@ import AccountApiKeyFields from './AccountApiKeyFields.vue'
 import AccountIdentityCell from './AccountIdentityCell.vue'
 import AccountPlanBadge from './AccountPlanBadge.vue'
 import AccountSessionModelsField from './AccountSessionModelsField.vue'
+import AccountSessionStateSummary from './AccountSessionStateSummary.vue'
 import AccountSettingsFields from './AccountSettingsFields.vue'
 
 defineProps<{
@@ -167,7 +168,7 @@ function removeExpectedLength(value: number) {
               添加
             </BaseButton>
           </div>
-          <span class="text-cp-xs text-cp-text-tertiary">当前实际 State：{{ Object.entries(account.sessionKeepaliveStateLengths).map(([model, length]) => `${model} ${length}`).join(' · ') || '未获取' }}</span>
+          <AccountSessionStateSummary :account="account" />
         </div>
       </BaseFormItem>
 

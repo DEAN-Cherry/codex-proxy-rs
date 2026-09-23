@@ -118,11 +118,19 @@ export interface AccountModelAccess {
   models: string[]
 }
 
+export interface SessionStateObservation {
+  stateLength: number | null
+  observedAt: string
+  httpStatus: number
+  validation: 'accepted' | 'invalid_length' | 'invalid_format' | 'missing' | 'upstream_error'
+}
+
 export interface Account {
   enableSessionKeepalive: boolean
   sessionKeepaliveModels: string[]
   sessionKeepaliveExpectedLengths: number[] | null
   sessionKeepaliveStateLengths: Record<string, number>
+  sessionKeepaliveObservations: Record<string, SessionStateObservation>
   outboundProxyEndpoint: string | null
   id: string
   name: string
@@ -675,6 +683,7 @@ export interface SessionStateRefresh {
     refreshedAt: string | null
     expireAt: number | null
     error: string | null
+    observation: SessionStateObservation | null
   }[]
 }
 

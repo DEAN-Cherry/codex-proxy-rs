@@ -208,6 +208,16 @@ impl ProviderAdmin for OpenAiAdminProvider {
         &self.provider_kind
     }
 
+    async fn session_state_observations(
+        &self,
+        account_id: &ProviderAccountId,
+    ) -> Result<
+        std::collections::BTreeMap<String, gateway_admin::model::accounts::SessionStateObservation>,
+        ProviderAdminError,
+    > {
+        Ok(self.sessions.state_observations(account_id).await)
+    }
+
     fn plan_type_display(&self, plan_type: &str) -> String {
         // 与官方 Desktop 的套餐名称映射一致；原始子类型继续由 plan_type 保留。
         match plan_type.to_ascii_lowercase().as_str() {

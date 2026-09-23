@@ -65,6 +65,7 @@ pub(super) fn account_view(item: AccountDirectoryItem, now: DateTime<Utc>) -> Ac
         usage,
         quota,
         session_keepalive_state_lengths,
+        session_keepalive_observations,
     } = item;
     let status = projection.status.as_str().to_owned();
     let cooldown = projection.cooldown;
@@ -82,6 +83,10 @@ pub(super) fn account_view(item: AccountDirectoryItem, now: DateTime<Utc>) -> Ac
         session_keepalive_models: account.session_keepalive_models,
         session_keepalive_expected_lengths: account.session_keepalive_expected_lengths,
         session_keepalive_state_lengths,
+        session_keepalive_observations: session_keepalive_observations
+            .into_iter()
+            .map(|(model, observation)| (model, observation.into()))
+            .collect(),
         id: account.id.clone(),
         name: account.name,
         notes: account.notes,

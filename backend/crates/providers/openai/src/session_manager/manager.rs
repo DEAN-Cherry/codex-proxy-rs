@@ -1,6 +1,10 @@
 //! 显式启用账号的实验性 State 轮换；运维网络与业务 transport 完全分离。
 
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{
+    collections::{BTreeMap, HashMap},
+    sync::Arc,
+    time::Duration,
+};
 
 use chrono::Utc;
 use futures::{
@@ -8,7 +12,10 @@ use futures::{
     future::{BoxFuture, join_all, select_ok},
 };
 use gateway_admin::{
-    model::accounts::{SessionModelRefresh, SessionRefreshObserver, SessionStateRefresh},
+    model::accounts::{
+        SessionModelRefresh, SessionRefreshObserver, SessionStateObservation, SessionStateRefresh,
+        SessionStateValidation,
+    },
     ports::provider::{ProviderAdminError, ProviderAdminErrorKind},
 };
 use gateway_core::{
@@ -46,6 +53,7 @@ const WARMUP_INTERVAL_SECONDS: u64 = 6;
 struct SessionCache {
     generation: u64,
     cancelled: tokio_util::sync::CancellationToken,
+    observations: BTreeMap<String, SessionStateObservation>,
 }
 
 #[derive(Default)]
@@ -96,6 +104,7 @@ impl SessionManager {
         cache.generation = cache.generation.wrapping_add(1);
         cache.cancelled.cancel();
         cache.cancelled = tokio_util::sync::CancellationToken::new();
+        cache.observations.clear();
         tracing::info!(target: "session_keepalive", account_id = account_id.as_str(), reason = "account_unavailable", "Session tickets invalidated");
         if let Some(tickets) = &self.tickets
             && tickets.clear(account_id).await.is_err()
@@ -156,6 +165,18 @@ impl SessionManager {
         self.refresh_rounds(account_id, observer, true).await
     }
 
+    /// 只读进程内最近观测，不读取票据原文，也不为目录查询创建账号状态。
+    pub async fn state_observations(
+        &self,
+        account_id: &ProviderAccountId,
+    ) -> BTreeMap<String, SessionStateObservation> {
+        let sessions = self.accounts.read().await.get(account_id).cloned();
+        match sessions {
+            Some(sessions) => sessions.cache.read().await.observations.clone(),
+            None => BTreeMap::new(),
+        }
+    }
+
     async fn refresh_rounds(
         &self,
         account_id: &ProviderAccountId,
@@ -203,7 +224,10 @@ impl SessionManager {
             .await
             .retain(|_, deadline| *deadline > tokio::time::Instant::now());
         let (generation, cancelled) = {
-            let cache = sessions.cache.read().await;
+            let mut cache = sessions.cache.write().await;
+            cache
+                .observations
+                .retain(|model, _| account.session_keepalive_models().contains(model));
             (cache.generation, cache.cancelled.clone())
         };
         let _capacity = self.capacity.try_acquire().map_err(|_| {
@@ -262,8 +286,9 @@ impl SessionManager {
                         biased;
                         () = cancelled.cancelled() => Err("账号配置已变化，已停止重写".to_owned()),
                         result = self.refresh_model_round(account, proxy, sessions, generation, model,
-                            client, authorization.expose_secret(), &credential.installation_id, &binding, policy.concurrency(), repeat) => result,
+                            client, authorization.expose_secret(), &credential.installation_id, &binding, policy.concurrency(), repeat, observer.as_ref()) => result,
                     };
+                    let observation = sessions.cache.read().await.observations.get(model).cloned();
                     let item = match result {
                         Ok(None) => return None,
                         Ok(Some(expire_at)) => SessionModelRefresh {
@@ -271,9 +296,10 @@ impl SessionManager {
                             refreshed_at: chrono::DateTime::from_timestamp(expire_at - TTL_SECONDS, 0),
                             expire_at: Some(expire_at),
                             error: None,
+                            observation,
                         },
                         Err(error) => SessionModelRefresh {
-                            model: model.clone(), refreshed_at: None, expire_at: None, error: Some(error),
+                            model: model.clone(), refreshed_at: None, expire_at: None, error: Some(error), observation,
                         },
                     };
                     if observer.is_some() || item.error.is_some() {
@@ -335,6 +361,7 @@ impl SessionManager {
         binding: &[u8; 32],
         configured_concurrency: u32,
         force: bool,
+        observer: Option<&SessionRefreshObserver>,
     ) -> Result<Option<i64>, String> {
         self.validate_refresh_context(account, proxy, sessions, generation, model, binding)
             .await
@@ -390,7 +417,8 @@ impl SessionManager {
                 authorization,
                 installation_id,
                 model,
-                &sessions.retry_after,
+                (sessions, generation),
+                observer,
             ))
         });
         match select_ok(probes).await {
@@ -451,6 +479,7 @@ impl SessionManager {
         Ok(client)
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn heartbeat(
         &self,
         client: &Client,
@@ -458,7 +487,8 @@ impl SessionManager {
         authorization: &str,
         installation_id: &str,
         model: &str,
-        retry_after: &Mutex<HashMap<String, tokio::time::Instant>>,
+        observation_context: (&AccountSessions, u64),
+        observer: Option<&SessionRefreshObserver>,
     ) -> Result<String, String> {
         let (account, proxy, attempt) = target;
         let probe_id = uuid::Uuid::new_v4().to_string();
@@ -527,12 +557,58 @@ impl SessionManager {
             format!("运维网络请求失败或超时（重写 {probe_id}）")
         })?;
         let status = response.status();
+        let state_header = response.headers().get("x-codex-turn-state");
+        let validation = if state_header.is_some_and(|header| {
+            !is_valid_state_length_for_account(
+                account.session_keepalive_expected_lengths(),
+                header.as_bytes().len(),
+            )
+        }) {
+            SessionStateValidation::InvalidLength
+        } else if status != reqwest::StatusCode::OK {
+            SessionStateValidation::UpstreamError
+        } else if let Some(header) = state_header {
+            if header.to_str().ok().is_some_and(|value| {
+                valid_state_for_account(account.session_keepalive_expected_lengths(), value)
+            }) {
+                SessionStateValidation::Accepted
+            } else {
+                SessionStateValidation::InvalidFormat
+            }
+        } else {
+            SessionStateValidation::Missing
+        };
+        let observation = SessionStateObservation {
+            state_length: state_header.and_then(|value| u32::try_from(value.as_bytes().len()).ok()),
+            observed_at: Utc::now(),
+            http_status: status.as_u16(),
+            validation,
+        };
+        let (sessions, generation) = observation_context;
+        {
+            // 观测与账号失效共用代次锁，旧请求不能在配置变更后重新填充展示。
+            let mut cache = sessions.cache.write().await;
+            if cache.generation == generation {
+                cache
+                    .observations
+                    .insert(model.to_owned(), observation.clone());
+                if let Some(observer) = observer {
+                    observer(SessionModelRefresh {
+                        model: model.to_owned(),
+                        refreshed_at: None,
+                        expire_at: None,
+                        error: None,
+                        observation: Some(observation),
+                    });
+                }
+            }
+        }
         if status.as_u16() == 429 {
             let delay =
                 crate::transport::retry_after_seconds(response.headers(), None).unwrap_or(60);
             let deadline =
                 tokio::time::Instant::now() + Duration::from_secs(delay.min(u64::from(u32::MAX)));
-            let mut current = retry_after.lock().await;
+            let mut current = sessions.retry_after.lock().await;
             current
                 .entry(model.to_owned())
                 .and_modify(|previous| *previous = (*previous).max(deadline))
@@ -540,10 +616,7 @@ impl SessionManager {
         }
         // 先断言 Header 原始字节长度，不复制、不 trim、不等待响应正文。
         if let Some(state) = response.headers().get("x-codex-turn-state")
-            && !is_valid_state_length_for_account(
-                account.session_keepalive_expected_lengths(),
-                state.as_bytes().len(),
-            )
+            && validation == SessionStateValidation::InvalidLength
         {
             log.record("invalid_state", json!({"status":status.as_u16(), "stateLength":state.as_bytes().len(), "elapsedMs":started.elapsed().as_millis()}));
             return Err(format!("上游 State 长度无效（重写 {probe_id}）"));
@@ -560,9 +633,7 @@ impl SessionManager {
             .headers()
             .get("x-codex-turn-state")
             .and_then(|value| value.to_str().ok())
-            .filter(|value| {
-                valid_state_for_account(account.session_keepalive_expected_lengths(), value)
-            })
+            .filter(|_| validation == SessionStateValidation::Accepted)
             .ok_or_else(|| format!("上游未返回有效 State（重写 {probe_id}）"))?
             .to_owned();
         drop(response);

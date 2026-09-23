@@ -896,6 +896,99 @@ async fn invalid_headers_and_first_wins_close_unfinished_http_responses() {
 }
 
 #[tokio::test]
+async fn rejected_refresh_observations_are_visible_without_replacing_valid_tickets() {
+    use gateway_admin::model::accounts::SessionStateValidation;
+
+    for (response, length, validation, status) in [
+        (
+            response_with_state(&format!("gAAAAA{}", "A".repeat(774))),
+            Some(780),
+            SessionStateValidation::InvalidLength,
+            200,
+        ),
+        (
+            response_with_state(&"A".repeat(292)),
+            Some(292),
+            SessionStateValidation::InvalidFormat,
+            200,
+        ),
+        (
+            ResponseTemplate::new(200),
+            None,
+            SessionStateValidation::Missing,
+            200,
+        ),
+        (
+            ResponseTemplate::new(503).insert_header("x-codex-turn-state", state("rejected")),
+            Some(292),
+            SessionStateValidation::UpstreamError,
+            503,
+        ),
+    ] {
+        let proxy = MockServer::start().await;
+        let (store, _, manager) = fixture(Some(&proxy.uri())).await;
+        let id = ProviderAccountId::new("acct_a").unwrap();
+        store.set_session_models("acct_a", vec!["gpt-6-astra".to_owned()]);
+        mock_model(&proxy, "acct_a", "gpt-6-astra", success("cached")).await;
+        manager.refresh(&id).await.unwrap();
+        proxy.reset().await;
+        mock_model(&proxy, "acct_a", "gpt-6-astra", response).await;
+
+        let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+        let pending = {
+            let manager = Arc::clone(&manager);
+            let id = id.clone();
+            tokio::spawn(async move {
+                manager
+                    .refresh_with_progress(
+                        &id,
+                        Some(Arc::new(move |item| {
+                            let _ = sender.send(item);
+                        })),
+                    )
+                    .await
+            })
+        };
+        let event = tokio::time::timeout(Duration::from_secs(2), receiver.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        let observation = event.observation.unwrap();
+        assert_eq!(observation.state_length, length);
+        assert_eq!(observation.validation, validation);
+        assert_eq!(observation.http_status, status);
+        assert!(event.expire_at.is_none());
+        assert!(!pending.is_finished());
+        pending.abort();
+        assert!(pending.await.unwrap_err().is_cancelled());
+
+        assert_eq!(
+            manager.state_observations(&id).await["gpt-6-astra"],
+            observation
+        );
+        assert!(
+            manager
+                .state_observations(&ProviderAccountId::new("acct_b").unwrap())
+                .await
+                .is_empty()
+        );
+        assert_eq!(
+            manager.state_lengths(&id).await.unwrap()["gpt-6-astra"],
+            292
+        );
+        let mut req = request("gpt-6-astra");
+        assert!(
+            manager
+                .rewrite(&store.account("acct_a").unwrap(), &mut req)
+                .await
+        );
+        assert_eq!(req.turn_state.as_deref(), Some(state("cached").as_str()));
+        manager.invalidate(&id).await;
+        assert!(manager.state_observations(&id).await.is_empty());
+    }
+}
+
+#[tokio::test]
 async fn manual_progress_reports_cached_success_while_another_model_keeps_retrying() {
     let proxy = MockServer::start().await;
     let (store, _, manager) = fixture(Some(&proxy.uri())).await;
@@ -911,10 +1004,17 @@ async fn manual_progress_reports_cached_success_while_another_model_keeps_retryi
         let id = id.clone();
         tokio::spawn(async move { manager.refresh_with_progress(&id, Some(observer)).await })
     };
-    let first = tokio::time::timeout(Duration::from_secs(2), receiver.recv())
-        .await
-        .unwrap()
-        .unwrap();
+    let first = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let item = receiver.recv().await.unwrap();
+            if item.expire_at.is_some() {
+                break item;
+            }
+            assert!(item.observation.is_some());
+        }
+    })
+    .await
+    .unwrap();
     assert_eq!(first.model, "gpt-6-astra");
     assert!(first.error.is_none());
     assert!(first.expire_at.is_some());
@@ -922,7 +1022,9 @@ async fn manual_progress_reports_cached_success_while_another_model_keeps_retryi
     assert!(!pending.is_finished());
     pending.abort();
     assert!(pending.await.unwrap_err().is_cancelled());
-    assert!(receiver.recv().await.is_none());
+    while let Some(item) = receiver.recv().await {
+        assert!(item.observation.is_some());
+    }
     // 前端断开进度流后，已经成功写入的缓存仍可服务业务。
     wait_for_state(&manager, &store, "gpt-6-astra", "visible").await;
 }

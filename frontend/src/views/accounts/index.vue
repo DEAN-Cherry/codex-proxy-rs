@@ -26,6 +26,7 @@ import AccountPlanBadge from './components/AccountPlanBadge.vue'
 import AccountQuotaPanel from './components/AccountQuotaPanel/index.vue'
 import AccountQuotaSummaryCell from './components/AccountQuotaSummaryCell/index.vue'
 import AccountSessionStateModal from './components/AccountSessionStateModal.vue'
+import AccountSessionStateSummary from './components/AccountSessionStateSummary.vue'
 import AccountStatusBadge from './components/AccountStatusBadge/index.vue'
 import AccountTableActions from './components/AccountTableActions.vue'
 import AccountUsagePanel from './components/AccountUsagePanel.vue'
@@ -314,12 +315,7 @@ const { account: stateAccount, open: stateModalOpen, result: stateResult, loadin
             </template>
 
             <template #sessionState="{ row }">
-              <div v-if="Object.keys(row.sessionKeepaliveStateLengths).length" class="grid min-w-0 gap-1 text-xs">
-                <span v-for="(length, model) in row.sessionKeepaliveStateLengths" :key="model" class="truncate" :title="`${model}: ${length} 字节`">
-                  <span class="font-mono">{{ model }}</span> · {{ length }} 字节
-                </span>
-              </div>
-              <span v-else class="text-cp-text-quaternary">未获取</span>
+              <AccountSessionStateSummary :account="row" />
             </template>
 
             <template #groups="{ row }">

@@ -311,8 +311,26 @@ pub enum AccountConnectionTestEvent {
 pub type AccountConnectionTestEventStream =
     Pin<Box<dyn Stream<Item = AccountConnectionTestEvent> + Send + 'static>>;
 
-/// 每个模型完成缓存写入或终止后通知调用方，不传递凭证原文。
+/// 每次收到上游响应、模型完成缓存写入或终止后通知调用方，不传递凭证原文。
 pub type SessionRefreshObserver = std::sync::Arc<dyn Fn(SessionModelRefresh) + Send + Sync>;
+
+/// 最近一次刷新响应的安全摘要，与仍可使用的缓存票据分开。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionStateObservation {
+    pub state_length: Option<u32>,
+    pub observed_at: DateTime<Utc>,
+    pub http_status: u16,
+    pub validation: SessionStateValidation,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionStateValidation {
+    Accepted,
+    InvalidLength,
+    InvalidFormat,
+    Missing,
+    UpstreamError,
+}
 
 /// 手动重写的逐模型结果，不承载 State 或鉴权原文。
 #[derive(Debug, Clone)]
@@ -321,6 +339,7 @@ pub struct SessionModelRefresh {
     pub refreshed_at: Option<DateTime<Utc>>,
     pub expire_at: Option<i64>,
     pub error: Option<String>,
+    pub observation: Option<SessionStateObservation>,
 }
 
 #[derive(Debug, Clone)]

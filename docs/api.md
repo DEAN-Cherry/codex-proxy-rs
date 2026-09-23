@@ -1030,14 +1030,16 @@ HTTP 返回 `429`，`error.code` 为 `key_daily_budget_exceeded` 或 `key_weekly
 
 `POST /api/admin/accounts/session-state/refresh` 使用管理员鉴权，JSON 请求为 `{ "accountId": "acct_..." }`，拒绝未知字段。账号必须启用、保活开启且 OAuth 凭据可用，另须开启全局 `sessionKeepaliveEnabled` 并存在测试通过的动态代理。一次刷新该账号 `sessionKeepaliveModels` 中的所有精确模型，遵守账号模型权限，不接受客户端 Token、代理或 State。
 
+账号视图另返回 `sessionKeepaliveObservations`，按模型记录最近一次后台或手动刷新收到的响应，包括校验失败的结果。每项含 `stateLength`（原始字节数，未返回头时为 `null`）、`observedAt`（RFC3339 时间）、`httpStatus` 和 `validation`（`accepted`、`invalid_length`、`invalid_format`、`missing`、`upstream_error`）。它与有效缓存 `sessionKeepaliveStateLengths` 独立：最近收到 780 字节但长度不符时，仍可同时展示先前有效的 292 字节缓存。`accepted` 只表示 HTTP/Header 准入通过，不代表缓存写入或完整推理成功。观测仅保留在当前进程，每个账号、模型最多一项，相关账号状态失效时清理，重启后重新采集；网络未收到响应时保留上次观测，不伪造 State 长度。
+
 返回标准管理响应信封，`data` 示例：
 
 ```json
 {
   "accountId": "acct_example",
   "models": [
-    { "model": "gpt-5.6-sol", "refreshedAt": "2026-09-18T02:00:00Z", "expireAt": 1789700400, "error": null },
-    { "model": "gpt-6-astra", "refreshedAt": null, "expireAt": null, "error": "上游拒绝重写请求" }
+    { "model": "gpt-5.6-sol", "refreshedAt": "2026-09-18T02:00:00Z", "expireAt": 1789700400, "error": null, "observation": { "stateLength": 292, "observedAt": "2026-09-18T02:00:00Z", "httpStatus": 200, "validation": "accepted" } },
+    { "model": "gpt-6-astra", "refreshedAt": null, "expireAt": null, "error": "上游拒绝重写请求", "observation": null }
   ]
 }
 ```
@@ -1046,7 +1048,7 @@ HTTP 返回 `429`，`error.code` 为 `key_daily_budget_exceeded` 或 `key_weekly
 
 HTTP 200 表示已完成本次逐模型处理，调用方必须检查各项 `error`，可全部失败。前置条件错误为 400，JSON 字段类型或未知字段错误为 422，不存在为 404，同账号刷新中或全局探活并发已满为 409，依赖不可用为 503，未授权为 401。响应不包含 State 原文，并带 `Cache-Control: no-store`。
 
-前端手动刷新使用 `POST /api/admin/accounts/session-state/refresh/stream`，鉴权与 JSON 请求体同上。响应为 `text/event-stream`，发送心跳并禁用代理缓冲；每个模型完成写入或终止时发送 `data: {"type":"model","data":{...逐模型结果...}}`，全体结束时发送 `{"type":"complete","data":{...汇总结果...}}`。已经建立流之后的前置条件或依赖错误通过 `{"type":"error","message":"脱敏错误"}` 返回；鉴权与请求解析错误仍使用标准 HTTP 错误信封。流不返回凭证。断开连接会取消未完成的刷新与重试，已写入的成功缓存保留；客户端不得自动重连而重复发起刷新。
+前端手动刷新使用 `POST /api/admin/accounts/session-state/refresh/stream`，鉴权与 JSON 请求体同上。响应为 `text/event-stream`，发送心跳并禁用代理缓冲；每次收到上游响应、模型完成写入或终止时发送 `data: {"type":"model","data":{...逐模型结果...}}`，其中 `observation` 为最近响应摘要或 `null`。仅观测更新时 `refreshedAt`、`expireAt`、`error` 均为 `null`，表示该模型仍在处理，不能据此判定刷新成功。全体结束时发送 `{"type":"complete","data":{...汇总结果...}}`。已经建立流之后的前置条件或依赖错误通过 `{"type":"error","message":"脱敏错误"}` 返回；鉴权与请求解析错误仍使用标准 HTTP 错误信封。流不返回凭证。断开连接会取消未完成的刷新与重试，已收到的观测和成功缓存保留；客户端不得自动重连而重复发起刷新。
 
 后台每轮结束按重试策略等待，仅刷新缺失、过期或剩余不足 10 分钟的票据。探测和业务分别使用独立 Client 与各自代理，业务仍走原账号出口。该实验性功能跨轮次复用票据，偏离 [官方 Codex 的逐轮 State 合同](https://github.com/openai/codex/blob/3d3ae4965ab370217e871b3a7f0d15589557ee4b/codex-rs/core/src/client.rs#L269-L296)，60 分钟仅为本地缓存期限，效果需在实际账号与出口验证。
 

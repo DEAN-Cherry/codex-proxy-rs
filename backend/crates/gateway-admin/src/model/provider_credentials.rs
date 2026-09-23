@@ -1102,6 +1102,7 @@ pub struct AccountDirectoryItem {
     pub quota: ProviderQuota,
     /// 当前有效 State 的模型长度摘要，不包含 State 原文。
     pub session_keepalive_state_lengths: BTreeMap<String, u32>,
+    pub session_keepalive_observations: BTreeMap<String, super::accounts::SessionStateObservation>,
 }
 
 /// 统一账号目录页。
